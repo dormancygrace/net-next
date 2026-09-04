@@ -18,7 +18,11 @@ description:
 
 properties:
   compatible:
-    const: ralink,rt2880-intc
+    oneOf:
+      - const: ralink,rt2880-intc
+      - items:
+          - const: ralink,mt7620a-intc
+          - const: ralink,rt2880-intc
 
   reg:
     maxItems: 1
@@ -27,6 +31,9 @@ properties:
     maxItems: 1
 
   interrupt-controller: true
+
+  '#address-cells':
+    const: 0
 
   '#interrupt-cells':
     const: 1

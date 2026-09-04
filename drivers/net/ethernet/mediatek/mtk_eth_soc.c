@@ -33,6 +33,8 @@
 #include "mtk_eth_soc.h"
 #include "mtk_wed.h"
 
+static bool mtk_uses_mtk_oob(struct net_device *dev);
+
 static int mtk_msg_level = -1;
 module_param_named(msg_level, mtk_msg_level, int, 0);
 MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
@@ -135,7 +137,10 @@ static const struct mtk_reg_map mt7620_reg_map = {
 #define MT7620_CDMA_CSUM_EN	GENMASK(2, 0)
 #define MT7620_GDMA_CSUM_EN	GENMASK(22, 20)
 #define MT7620_PDMA_BT_16DWORDS	(2 << 4)
+#define MT7620_TX_DMA_FP_BMAP	GENMASK(27, 20)
+#define MT7620_TX_DMA_LAST_PORT	5
 #define MT7620_RX_DMA_L4_VALID	BIT(23)
+#define MT7620_RX_DMA_SP		GENMASK(21, 19)
 
 static const struct mtk_reg_map mt7986_reg_map = {
 	.tx_irq_mask		= 0x461c,
@@ -1572,7 +1577,7 @@ static void mtk_tx_set_dma_desc_v1(struct net_device *dev, void *txd,
 	WRITE_ONCE(desc->txd3, data);
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
-		data = 0; /* Let the switch perform normal destination lookup. */
+		data = FIELD_PREP(MT7620_TX_DMA_FP_BMAP, info->port_map);
 	} else {
 		data = (mac->id + 1) << TX_DMA_FPORT_SHIFT;
 	}
@@ -1680,6 +1685,17 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 	int i, n_desc = 1;
 	int queue = skb_get_queue_mapping(skb);
 	int k = 0;
+	u8 port_map = 0;
+
+	if (MTK_HAS_CAPS(soc->caps, MTK_SOC_MT7620) &&
+	    mtk_uses_mtk_oob(dev)) {
+		struct metadata_dst *md_dst = skb_metadata_dst(skb);
+
+		if (md_dst && md_dst->type == METADATA_HW_PORT_MUX &&
+		    md_dst->u.port_info.port_id <= MT7620_TX_DMA_LAST_PORT)
+			port_map = BIT(md_dst->u.port_info.port_id);
+	}
+	txd_info.port_map = port_map;
 
 	txq = netdev_get_tx_queue(dev, queue);
 	itxd = ring->next_free;
@@ -1733,6 +1749,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 			txd_info.size = min_t(unsigned int, frag_size,
 					      soc->tx.dma_max_len);
 			txd_info.qid = queue;
+			txd_info.port_map = port_map;
 			txd_info.last = i == skb_shinfo(skb)->nr_frags - 1 &&
 					!(frag_size - txd_info.size);
 			txd_info.addr = skb_frag_dma_map(eth->dma_dev, frag,
@@ -2470,6 +2487,16 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
 			dev_sw_netstats_rx_add(netdev, skb->len);
 		skb->protocol = eth_type_trans(skb, netdev);
+
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+		    mtk_uses_mtk_oob(netdev)) {
+			unsigned int port;
+
+			port = FIELD_GET(MT7620_RX_DMA_SP, trxd.rxd4);
+			if (port < ARRAY_SIZE(eth->dsa_meta) &&
+			    eth->dsa_meta[port])
+				skb_dst_set_noref(skb, &eth->dsa_meta[port]->dst);
+		}
 
 		/* When using VLAN untagging in combination with DSA, the
 		 * hardware treats the MTK special tag as a VLAN and untags it.
@@ -3672,6 +3699,16 @@ static bool mtk_uses_dsa(struct net_device *dev)
 #endif
 }
 
+static bool mtk_uses_mtk_oob(struct net_device *dev)
+{
+#if IS_ENABLED(CONFIG_NET_DSA)
+	return netdev_uses_dsa(dev) &&
+	       dev->dsa_ptr->tag_ops->proto == DSA_TAG_PROTO_MTK_OOB;
+#else
+	return false;
+#endif
+}
+
 static int mtk_device_event(struct notifier_block *n, unsigned long event, void *ptr)
 {
 	struct mtk_mac *mac = container_of(n, struct mtk_mac, device_notifier);
@@ -3725,14 +3762,42 @@ static int mtk_max_gmac_mtu(struct mtk_eth *eth)
 	return max_mtu;
 }
 
+static int mtk_dsa_metadata_init(struct mtk_eth *eth)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(eth->dsa_meta); i++) {
+		struct metadata_dst *md_dst = eth->dsa_meta[i];
+
+		if (md_dst)
+			continue;
+
+		md_dst = metadata_dst_alloc(0, METADATA_HW_PORT_MUX,
+					    GFP_KERNEL);
+		if (!md_dst)
+			return -ENOMEM;
+
+		md_dst->u.port_info.port_id = i;
+		eth->dsa_meta[i] = md_dst;
+	}
+
+	return 0;
+}
+
 static int mtk_open(struct net_device *dev)
 {
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
 	struct mtk_mac *target_mac;
-	int i, err, ppe_num, mtu;
+	int err, ppe_num, mtu;
 
 	ppe_num = eth->soc->ppe_num;
+
+	if ((mtk_uses_dsa(dev) || mtk_uses_mtk_oob(dev)) && !eth->prog) {
+		err = mtk_dsa_metadata_init(eth);
+		if (err)
+			return err;
+	}
 
 	err = phylink_of_phy_connect(mac->phylink, mac->of_node, 0);
 	if (err) {
@@ -3797,22 +3862,7 @@ static int mtk_open(struct net_device *dev)
 	    MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
 		return 0;
 
-	if (mtk_uses_dsa(dev) && !eth->prog) {
-		for (i = 0; i < ARRAY_SIZE(eth->dsa_meta); i++) {
-			struct metadata_dst *md_dst = eth->dsa_meta[i];
-
-			if (md_dst)
-				continue;
-
-			md_dst = metadata_dst_alloc(0, METADATA_HW_PORT_MUX,
-						    GFP_KERNEL);
-			if (!md_dst)
-				return -ENOMEM;
-
-			md_dst->u.port_info.port_id = i;
-			eth->dsa_meta[i] = md_dst;
-		}
-	} else {
+	if (!mtk_uses_dsa(dev) || eth->prog) {
 		/* Hardware DSA untagging and VLAN RX offloading need to be
 		 * disabled if at least one MAC does not use DSA.
 		 */
@@ -5186,6 +5236,9 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	eth->netdev[id]->netdev_ops = &mtk_netdev_ops;
 	eth->netdev[id]->base_addr = (unsigned long)eth->base;
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		netif_keep_dst(eth->netdev[id]);
+
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
 	    (eth->chip_rev & GENMASK(3, 0)) >= 5)
 		features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
@@ -5574,6 +5627,9 @@ static int mtk_probe(struct platform_device *pdev)
 			err = -EINVAL;
 			goto err_unreg_netdev;
 		}
+		err = mtk_dsa_metadata_init(eth);
+		if (err)
+			goto err_unreg_netdev;
 	}
 
 	for (i = 0; i < MTK_MAX_DEVS; i++) {

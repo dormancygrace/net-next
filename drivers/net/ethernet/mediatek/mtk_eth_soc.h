@@ -1138,6 +1138,7 @@ struct mtk_tx_dma_desc_info {
 	u32		size;
 	u16		vlan_tci;
 	u16		qid;
+	u8		port_map;
 	u8		gso:1;
 	u8		csum:1;
 	u8		vlan:1;

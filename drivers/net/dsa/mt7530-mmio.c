@@ -10,6 +10,7 @@
 #include "mt7530.h"
 
 static const struct of_device_id mt7988_of_match[] = {
+	{ .compatible = "mediatek,mt7620-switch", .data = &mt753x_table[ID_MT7620], },
 	{ .compatible = "airoha,an7583-switch", .data = &mt753x_table[ID_AN7583], },
 	{ .compatible = "airoha,en7581-switch", .data = &mt753x_table[ID_EN7581], },
 	{ .compatible = "econet,en7528-switch", .data = &mt753x_table[ID_EN7528], },
@@ -44,7 +45,8 @@ mt7988_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	priv->rstc = devm_reset_control_get(&pdev->dev, NULL);
+	priv->rstc = devm_reset_control_get(&pdev->dev,
+					    priv->id == ID_MT7620 ? "esw" : NULL);
 	if (IS_ERR(priv->rstc)) {
 		dev_err(&pdev->dev, "Couldn't get our reset line\n");
 		return PTR_ERR(priv->rstc);
@@ -60,6 +62,12 @@ mt7988_probe(struct platform_device *pdev)
 					     &sw_regmap_config);
 	if (IS_ERR(priv->regmap))
 		return PTR_ERR(priv->regmap);
+
+	if (priv->id == ID_MT7620) {
+		ret = mt7620_switch_init(priv);
+		if (ret)
+			return ret;
+	}
 
 	return dsa_register_switch(priv->ds);
 }

@@ -24,6 +24,7 @@ enum mt753x_id {
 	ID_EN7581 = 4,
 	ID_AN7583 = 5,
 	ID_EN7528 = 6,
+	ID_MT7620 = 7,
 };
 
 #define	NUM_TRGMII_CTRL			5
@@ -424,6 +425,7 @@ enum mt7530_vlan_port_acc_frm {
 #define  MT7531_DIS_CLR			BIT(31)
 
 #define MT7530_GMACCR			0x30e0
+#define MT7620_GMACCR			0x3fe0
 #define  MAX_RX_JUMBO_MASK		GENMASK(5, 2)
 #define  MAX_RX_JUMBO(x)		FIELD_PREP(MAX_RX_JUMBO_MASK, x)
 #define  MAX_RX_PKT_LEN_MASK		GENMASK(1, 0)
@@ -841,6 +843,7 @@ enum mt7530_p5_mode {
 };
 
 struct mt7530_priv;
+struct mt7620_switch;
 
 struct mt753x_pcs {
 	struct phylink_pcs pcs;
@@ -908,6 +911,7 @@ struct mt753x_info {
  * @stats_last:		Jiffies timestamp of last MIB counter poll
  */
 struct mt7530_priv {
+	struct mt7620_switch	*mt7620;
 	struct device		*dev;
 	struct dsa_switch	*ds;
 	struct mii_bus		*bus;
@@ -958,6 +962,7 @@ struct mt7530_hw_stats {
 	u8		sizeof_stat;
 };
 
+int mt7620_switch_init(struct mt7530_priv *priv);
 int mt7530_probe_common(struct mt7530_priv *priv);
 void mt7530_remove_common(struct mt7530_priv *priv);
 

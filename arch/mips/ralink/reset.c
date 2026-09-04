@@ -20,12 +20,24 @@
 
 #define RSTCTL_RESET_PCI	BIT(26)
 #define RSTCTL_RESET_SYSTEM	BIT(0)
+#define RSTCTL_RESET_FE		BIT(21)
+#define RSTCTL_RESET_ESW		BIT(23)
+#define RSTCTL_RESET_EPHY	BIT(24)
 
 static void ralink_restart(char *command)
 {
 	if (IS_ENABLED(CONFIG_PCI)) {
 		rt_sysc_m32(0, RSTCTL_RESET_PCI, SYSC_REG_RESET_CTRL);
 		mdelay(50);
+	}
+
+	/* A system reset alone can leave the MT7620 Ethernet blocks active. */
+	if (ralink_soc == MT762X_SOC_MT7620A ||
+	    ralink_soc == MT762X_SOC_MT7620N) {
+		rt_sysc_m32(0, RSTCTL_RESET_FE | RSTCTL_RESET_ESW |
+			    RSTCTL_RESET_EPHY, SYSC_REG_RESET_CTRL);
+		/* Restart runs in atomic context. */
+		udelay(100);
 	}
 
 	local_irq_disable();

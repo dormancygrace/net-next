@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 /dts-v1/;
 
-#include "mt7620a.dtsi"
+#include "mt7620n.dtsi"
 
 / {
-	compatible = "ralink,mt7620a-eval-board", "ralink,mt7620a-soc";
-	model = "Ralink MT7620A evaluation board";
+	compatible = "ralink,mt7620n-eval-board", "ralink,mt7620n-soc";
+	model = "Ralink MT7620N evaluation board";
 
 	memory@0 {
 		device_type = "memory";

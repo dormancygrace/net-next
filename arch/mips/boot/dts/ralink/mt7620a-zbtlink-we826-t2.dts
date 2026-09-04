@@ -3,18 +3,15 @@
 
 #include "mt7620a.dtsi"
 
-/ {
-	compatible = "ralink,mt7620a-eval-board", "ralink,mt7620a-soc";
-	model = "Ralink MT7620A evaluation board";
+/* RAM-boot Ethernet demo; RAM size is detected by the SoC platform code. */
 
-	memory@0 {
-		device_type = "memory";
-		reg = <0x0 0x2000000>;
-	};
+/ {
+	compatible = "zbtlink,zbt-we826-t2", "ralink,mt7620a-soc";
+	model = "ZBTlink WE826-T2 Ethernet integration demo";
 
 	chosen {
-		stdout-path = "serial0:57600n8";
-		bootargs = "console=ttyS0,57600";
+		stdout-path = "serial0:115200n8";
+		bootargs = "console=ttyS0,115200";
 	};
 };
 
@@ -31,28 +28,28 @@
 
 		port@0 {
 			reg = <0>;
-			label = "lan1";
+			label = "lan4";
 			phy-mode = "internal";
 			phy-handle = <&ephy0>;
 		};
 
 		port@1 {
 			reg = <1>;
-			label = "lan2";
+			label = "lan3";
 			phy-mode = "internal";
 			phy-handle = <&ephy1>;
 		};
 
 		port@2 {
 			reg = <2>;
-			label = "lan3";
+			label = "lan2";
 			phy-mode = "internal";
 			phy-handle = <&ephy2>;
 		};
 
 		port@3 {
 			reg = <3>;
-			label = "lan4";
+			label = "lan1";
 			phy-mode = "internal";
 			phy-handle = <&ephy3>;
 		};

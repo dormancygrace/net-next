@@ -89,6 +89,26 @@ choice
 		depends on SOC_MT7620
 		select BUILTIN_DTB
 
+	config DTB_MT7620N_EVAL
+		bool "MT7620N evaluation board"
+		depends on SOC_MT7620
+		select BUILTIN_DTB
+		help
+		  Build in the MT7620N Ethernet demo device tree. It uses the
+		  integrated five-port PHY bank and internal CPU conduit.
+		  Adjust memory size and port labels for the actual board.
+		  An initramfs is required for a standalone RAM boot.
+
+	config DTB_ZBT_WE826_T2
+		bool "ZBTlink WE826-T2 Ethernet demo"
+		depends on SOC_MT7620
+		select BUILTIN_DTB
+		help
+		  Build in a device tree for Ethernet testing on the ZBTlink
+		  WE826-T2. The board description enables the integrated switch
+		  and serial console and detects the installed RAM size.
+		  Supply an initramfs when booting this demo from RAM.
+
 	config DTB_OMEGA2P
 		bool "Onion Omega2+"
 		depends on SOC_MT7620

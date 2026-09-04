@@ -72,6 +72,69 @@
 		};
 	};
 
+	ethernet: ethernet@10100000 {
+		compatible = "mediatek,mt7620-eth";
+		mediatek,sysc = <&sysc>;
+		reg = <0x10100000 0x10000>;
+		clocks = <&sysc MT7620_CLK_BUS>;
+		clock-names = "fe";
+		resets = <&sysc 21>;
+		reset-names = "fe";
+		interrupt-parent = <&cpuintc>;
+		interrupts = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "disabled";
+
+		gmac0: mac@0 {
+			compatible = "mediatek,eth-mac";
+			reg = <0>;
+			phy-mode = "internal";
+
+			fixed-link {
+				speed = <1000>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
+
+	switch0: switch@10110000 {
+		compatible = "mediatek,mt7620-switch";
+		reg = <0x10110000 0x8000>;
+		mediatek,sysc = <&sysc>;
+		resets = <&sysc 23>, <&sysc 24>;
+		reset-names = "esw", "ephy";
+		interrupt-parent = <&intc>;
+		interrupts = <17>;
+		status = "disabled";
+
+		mdio {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ephy0: ethernet-phy@0 {
+				reg = <0>;
+			};
+
+			ephy1: ethernet-phy@1 {
+				reg = <1>;
+			};
+
+			ephy2: ethernet-phy@2 {
+				reg = <2>;
+			};
+
+			ephy3: ethernet-phy@3 {
+				reg = <3>;
+			};
+
+			ephy4: ethernet-phy@4 {
+				reg = <4>;
+			};
+		};
+	};
+
 	wmac: wifi@10180000 {
 		compatible = "ralink,rt2880-wifi";
 		reg = <0x10180000 0x40000>;

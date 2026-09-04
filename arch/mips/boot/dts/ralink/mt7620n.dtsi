@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
+#include "mt7620a.dtsi"
+
+/ {
+	compatible = "ralink,mt7620n-soc";
+};

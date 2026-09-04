@@ -27,7 +27,8 @@ description: |
 
   The MT7530 in MT7620AN, MT7620DA, MT7620DAN and MT7620NN SoCs has 10/100 PHYs
   and the switch registers are directly mapped into SoC's memory map rather than
-  using MDIO. The DSA driver currently doesn't support MT7620 variants.
+  using MDIO. They use DMA descriptor metadata for CPU port tagging and have
+  sixteen VLAN table slots, one reserved for VLAN-unaware bridging.
 
   There is only the standalone version of MT7531.
 
@@ -76,6 +77,9 @@ description: |
 properties:
   compatible:
     oneOf:
+      - description: Integrated MT7620 switch with five 10/100 PHYs
+        const: mediatek,mt7620-switch
+
       - description:
           Standalone MT7530 and multi-chip module MT7530 in MT7623AI SoC
         const: mediatek,mt7530
@@ -164,14 +168,25 @@ properties:
       reset line is used.
     maxItems: 1
 
+  mediatek,sysc:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      MT7620 system controller containing package identification and the
+      integrated PHY and Ethernet pin configuration registers.
+
   reset-names:
-    const: mcm
+    oneOf:
+      - const: mcm
+      - items:
+          - const: esw
+          - const: ephy
 
   resets:
     description:
       Phandle pointing to the system reset controller with line index for the
       ethsys.
-    maxItems: 1
+    minItems: 1
+    maxItems: 2
 
 patternProperties:
   "^(ethernet-)?ports$":
@@ -272,6 +287,34 @@ $defs:
 
 allOf:
   - $ref: dsa.yaml#/$defs/ethernet-ports
+  - if:
+      properties:
+        compatible:
+          const: mediatek,mt7620-switch
+    then:
+      $ref: "#/$defs/builtin-dsa-port"
+      properties:
+        resets:
+          minItems: 2
+        reset-names:
+          items:
+            - const: esw
+            - const: ephy
+        interrupt-controller: false
+        gpio-controller: false
+        mediatek,mcm: false
+      required:
+        - mediatek,sysc
+        - resets
+        - reset-names
+        - interrupts
+    else:
+      properties:
+        mediatek,sysc: false
+        resets:
+          maxItems: 1
+        reset-names:
+          const: mcm
   - if:
       required:
         - mediatek,mcm

@@ -5253,7 +5253,7 @@ static int mtk_probe(struct platform_device *pdev)
 				err = -EPROBE_DEFER;
 				goto err_wed_exit;
 			}
-			if (eth->soc->required_clks & BIT(i)) {
+			if (eth->soc->required_clks & BIT_ULL(i)) {
 				dev_err(&pdev->dev, "clock %s not found\n",
 					mtk_clks_source_name[i]);
 				err = -EINVAL;

@@ -4486,7 +4486,11 @@ static int mtk_free_dev(struct mtk_eth *eth)
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
 		if (!eth->netdev[i])
 			continue;
+		if (eth->mac[i]->phylink)
+			phylink_destroy(eth->mac[i]->phylink);
 		free_netdev(eth->netdev[i]);
+		eth->netdev[i] = NULL;
+		eth->mac[i] = NULL;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(eth->dsa_meta); i++) {
@@ -4509,7 +4513,8 @@ static int mtk_unreg_dev(struct mtk_eth *eth)
 		mac = netdev_priv(eth->netdev[i]);
 		if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
 			unregister_netdevice_notifier(&mac->device_notifier);
-		unregister_netdev(eth->netdev[i]);
+		if (eth->netdev[i]->reg_state == NETREG_REGISTERED)
+			unregister_netdev(eth->netdev[i]);
 	}
 
 	return 0;
@@ -4525,11 +4530,11 @@ static void mtk_sgmii_destroy(struct mtk_eth *eth)
 
 static int mtk_cleanup(struct mtk_eth *eth)
 {
-	mtk_sgmii_destroy(eth);
 	mtk_unreg_dev(eth);
-	mtk_free_dev(eth);
-	cancel_work_sync(&eth->pending_work);
 	cancel_delayed_work_sync(&eth->reset.monitor_work);
+	cancel_work_sync(&eth->pending_work);
+	mtk_free_dev(eth);
+	mtk_sgmii_destroy(eth);
 
 	return 0;
 }
@@ -4864,7 +4869,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	err = of_get_ethdev_address(mac->of_node, eth->netdev[id]);
 	if (err == -EPROBE_DEFER)
-		return err;
+		goto free_netdev;
 
 	if (err) {
 		/* If the mac address is invalid, use random mac address */
@@ -5013,6 +5018,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 free_netdev:
 	free_netdev(eth->netdev[id]);
+	eth->netdev[id] = NULL;
+	eth->mac[id] = NULL;
 	return err;
 }
 
@@ -5325,20 +5332,6 @@ static int mtk_probe(struct platform_device *pdev)
 		}
 	}
 
-	for (i = 0; i < MTK_MAX_DEVS; i++) {
-		if (!eth->netdev[i])
-			continue;
-
-		err = register_netdev(eth->netdev[i]);
-		if (err) {
-			dev_err(eth->dev, "error bringing up device\n");
-			goto err_deinit_ppe;
-		} else
-			netif_info(eth, probe, eth->netdev[i],
-				   "mediatek frame engine at 0x%08lx, irq %d\n",
-				   eth->netdev[i]->base_addr, eth->irq[MTK_FE_IRQ_SHARED]);
-	}
-
 	/* we run 2 devices on the same DMA ring so we need a dummy device
 	 * for NAPI to work
 	 */
@@ -5346,10 +5339,25 @@ static int mtk_probe(struct platform_device *pdev)
 	if (!eth->dummy_dev) {
 		err = -ENOMEM;
 		dev_err(eth->dev, "failed to allocated dummy device\n");
-		goto err_unreg_netdev;
+		goto err_deinit_ppe;
 	}
 	netif_napi_add(eth->dummy_dev, &eth->tx_napi, mtk_napi_tx);
 	netif_napi_add(eth->dummy_dev, &eth->rx_napi, mtk_napi_rx);
+
+	for (i = 0; i < MTK_MAX_DEVS; i++) {
+		if (!eth->netdev[i])
+			continue;
+
+		err = register_netdev(eth->netdev[i]);
+		if (err) {
+			dev_err(eth->dev, "error bringing up device\n");
+			goto err_unreg_netdev;
+		} else
+			netif_info(eth, probe, eth->netdev[i],
+				   "mediatek frame engine at 0x%08lx, irq %d\n",
+				   eth->netdev[i]->base_addr, eth->irq[MTK_FE_IRQ_SHARED]);
+	}
+
 
 	platform_set_drvdata(pdev, eth);
 	schedule_delayed_work(&eth->reset.monitor_work,
@@ -5359,6 +5367,9 @@ static int mtk_probe(struct platform_device *pdev)
 
 err_unreg_netdev:
 	mtk_unreg_dev(eth);
+	netif_napi_del(&eth->tx_napi);
+	netif_napi_del(&eth->rx_napi);
+	free_netdev(eth->dummy_dev);
 err_deinit_ppe:
 	mtk_ppe_deinit(eth);
 	mtk_mdio_cleanup(eth);

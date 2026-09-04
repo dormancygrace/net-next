@@ -44,6 +44,7 @@ Contents:
    marvell/octeontx2
    marvell/octeon_ep
    marvell/octeon_ep_vf
+   mediatek/mt7620-integration
    mellanox/mlx5/index
    meta/fbnic
    microsoft/netvsc

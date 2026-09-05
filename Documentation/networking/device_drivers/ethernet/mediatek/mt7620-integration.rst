@@ -457,3 +457,114 @@ both links passed final stock-firmware pings. Temporary endpoint addresses,
 IPv6 settings, MTU and the task's TFTP service were restored. Flash was not
 written, and all six production-buildtree reference hashes were unchanged.
 No forced deferred-probe failure or long-duration soak was tested.
+
+DSA architecture review revision (v5)
+------------------------------------
+
+The ``mt7620-integration-v5`` branch addresses the four subsequent review
+comments on allocation, duplicate private state, PHY ownership and model
+checks. Published v4 history is retained. The tested code revision is
+``e4dc39ef2a184bd57b1b60ec29f66943dab72da4``; the following documentation
+commit does not change that code.
+
+* The common probe devm-allocates VLAN mapping and per-port counter storage
+  in ``mt7530_priv``/``mt7530_port``. The duplicate ``mt7620_switch`` is
+  removed. Hardware initialization stays in setup; there is no exported
+  MT7620-specific probe helper.
+* ``drivers/net/phy/mt7620-ephy.c`` owns the embedded PHY tuning. It uses
+  phylib package lifetime and locking, saves/restores MDIO pages, propagates
+  errors, and only marks global tuning initialized after success. Package
+  identification uses the documented syscon on the internal MDIO node.
+  The switch resets the shared PHY block before MDIO enumeration. Binding,
+  DTS, Kconfig and the existing MediaTek PHY MAINTAINERS entry are updated.
+* Chip register/frame data and MAC, MDIO/IRQ, statistics, VLAN mapping and
+  optional traffic-control operations replace the newly introduced model
+  conditionals in shared operations. ``ID_MT7620`` remains in chip/match
+  tables only. Existing models retain their earlier operations and data.
+
+The source review covered the actual PHY/package/phylink call chains,
+MDIO and package lock ordering, IRQ masking before devres teardown,
+work cancellation, per-port counter lifetime, and VLAN slot allocation
+rollback. This is a source review, not fault-injection evidence.
+
+V5 build coverage
+~~~~~~~~~~~~~~~~~
+
+Changed driver objects and the ordinary MTK tagger passed ``W=1``,
+``KCFLAGS=-Werror`` and ``C=2`` with sparse ``37156835e3d7`` on six configs:
+
+* MIPS MT7621 little-endian SMP, and MIPS EN7528 big-endian.
+* ARMv7 multi_v7_defconfig with MediaTek/Airoha enabled.
+* ARM64 defconfig with MediaTek/Airoha enabled.
+* x86_64 allmodconfig/allyesconfig-derived configs, explicitly disabling
+  the OOB tagger and BTF.
+
+These checks build the MT7530 core, both bus wrappers, ordinary MTK tagger
+and MT7620 PHY objects. They are not full kernel/module links or runtime
+validation on those other platforms. The full WE826 uImage/modules target
+links with ``W=1`` and only the OOB tagger enabled. Unchanged MIPS
+traps/math-emu code emitted warnings during an earlier full rebuild;
+the changed objects separately passed warnings-as-errors. Switch binding
+schema/examples and the eval/WE826 DTBs pass the selected binding checks.
+
+V5 RAM validation (2026-09-05)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The final image SHA-256 is
+``3825c74aa0121eaaaf3398c4949e504c9f1aee9c7eee7dc20e7c7b0ef2c17984``.
+It booted from RAM on WE826-T2 MT7620A ECO6, with five PHYs bound to the
+new driver and irq=MAC. All five observed PHY IDs are ``0x03a2940d``;
+this does not establish coverage of other silicon revisions or QFN tuning.
+Physical traffic used LAN1 and WAN at 100BASE-T full duplex.
+
+* Eight initial eight-second IPv4/IPv6 TCP RX/TX runs received
+  79.88--80.05 Mbit/s at a requested 80 Mbit/s, with no retransmissions.
+  The initial WAN bidirectional run received 79.87/79.74 Mbit/s with
+  2/0 retransmissions.
+* At MTU 2030, three UDP packets of each IP length 1500, 1501, 2026 and
+  2030 arrived with no new GDM1 length errors. At MTU 1500, only length
+  1500 arrived and the three larger lengths caused nine length errors.
+  Length 2031 was not delivered; its earlier drop is not attributed to FE.
+* Three close/open cycles preserved FE totals while down and monotonically
+  increasing totals after open. Switch/FE unbind followed by FE/switch bind
+  restored both links, each passing ten pings, without BUG, WARNING, Oops
+  or refcount diagnostics in the captured kernel log.
+* Tagged CPU traffic passed five pings at IP MTU 2026. VLAN100 bridge
+  forwarding passed twenty pings in each direction with zero FE and CPU
+  switch-port counter deltas. Removing the destination port from VLAN100
+  blocked all three isolation probes. Fifteen nonzero VLANs filled the
+  table; the next VID returned ENOSPC. Deleting one entry allowed a new
+  VID, and existing VLAN100 traffic still passed. Switching the bridge
+  to VLAN-unaware forwarding passed five pings.
+* Customer VIDs 1, 80, 81, 100, 126 and 4094 each passed three CPU pings
+  at IP MTU 2026 through the corrected service-tag transport.
+
+Two lab transport problems initially prevented VLAN tests. An outer
+802.1Q/inner 802.1Q setup did not preserve the customer tag in that test
+path. A direct tagged control reached the CPU correctly; moving the lab
+transport to outer 802.1ad allowed ordinary customer VLAN interfaces.
+Separately, provider-bridge BPDUs traversed the DUT's VLAN-unaware bridge
+and caused the lab switch to mark one test port as an RSTP backup with
+forwarding disabled. Disabling RSTP on the lab switch changed the same
+three failed probes to five successful probes. The complete VLAN suite
+then passed. No kernel change was made during this diagnosis; temporary
+register probes were restored before the successful suite.
+
+After the lab corrections, eight more paced TCP runs received
+79.87--79.95 Mbit/s with zero retransmissions. Bidirectional TCP received
+79.71/79.71 Mbit/s with 6/0 retransmissions. These are short paced tests,
+not maximum-rate or loss-free soak results; the occasional bidirectional
+retransmissions remain unexplained.
+
+The board returned to installed Linux 6.12.94. Network/wireless and wpad
+hashes match the pre-test values; both stock-firmware ports passed three
+pings. Temporary endpoint addresses, MTU/IPv6 settings and the task's TFTP
+service were restored. All sixteen lab containers and management devices
+remain reachable. No flash writes occurred; all six production-buildtree
+reference hashes still match.
+
+Before an upstream submission, standard-statistics uAPI review (including
+previous FE counters), full-tree allmod/allyes validation, wider runtime
+and error-path coverage, and human review/DCO remain outstanding. Only
+WE826 ECO6 has runtime evidence here. The separate seven-patch Ethernet
+RFC is unchanged and unsent, and MT7620 PPE remains outside its first series.

@@ -19,6 +19,7 @@ properties:
     enum:
       - mediatek,mt2701-eth
       - mediatek,mt7623-eth
+      - mediatek,mt7620-eth
       - mediatek,mt7621-eth
       - mediatek,mt7622-eth
       - mediatek,mt7629-eth
@@ -31,11 +32,11 @@ properties:
     maxItems: 1
 
   clocks:
-    minItems: 2
+    minItems: 1
     maxItems: 24
 
   clock-names:
-    minItems: 2
+    minItems: 1
     maxItems: 24
 
   interrupts:
@@ -58,9 +59,11 @@ properties:
     maxItems: 1
 
   resets:
+    minItems: 1
     maxItems: 3
 
   reset-names:
+    minItems: 1
     items:
       - const: fe
       - const: gmac
@@ -68,6 +71,12 @@ properties:
 
   sram:
     maxItems: 1
+
+  mediatek,sysc:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description:
+      MT7620 system controller containing the silicon ECO revision used to
+      determine scatter-gather and segmentation offload capabilities.
 
   mediatek,ethsys:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -137,6 +146,49 @@ properties:
 
 allOf:
   - $ref: ethernet-controller.yaml#
+  - if:
+      properties:
+        compatible:
+          const: mediatek,mt7620-eth
+    then:
+      properties:
+        clocks:
+          maxItems: 1
+        clock-names:
+          items:
+            - const: fe
+        resets:
+          maxItems: 1
+        reset-names:
+          items:
+            - const: fe
+        interrupts:
+          maxItems: 1
+        mediatek,ethsys: false
+        mediatek,wed: false
+        mediatek,wed-pcie: false
+        mdio-bus: false
+        sram: false
+        mac@1: false
+        mac@2: false
+      required:
+        - resets
+        - reset-names
+        - mac@0
+        - mediatek,sysc
+    else:
+      properties:
+        clocks:
+          minItems: 2
+        clock-names:
+          minItems: 2
+        resets:
+          minItems: 3
+        reset-names:
+          minItems: 3
+        mediatek,sysc: false
+      required:
+        - mediatek,ethsys
   - if:
       properties:
         compatible:
@@ -473,7 +525,6 @@ required:
   - interrupts
   - clocks
   - clock-names
-  - mediatek,ethsys
 
 unevaluatedProperties: false
 

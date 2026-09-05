@@ -25,8 +25,27 @@
 
 #include "mt7530.h"
 
-#define MT7530_STATS_POLL_INTERVAL	(1 * HZ)
+#define MT7530_STATS_POLL_INTERVAL_MS	1000
 #define MT7530_STATS_RATE_LIMIT		(HZ / 10)
+
+struct mt7530_stats_ops {
+	void (*get_strings)(struct dsa_switch *ds, int port, u32 stringset,
+			    u8 *data);
+	void (*get_ethtool_stats)(struct dsa_switch *ds, int port, u64 *data);
+	int (*get_sset_count)(struct dsa_switch *ds, int port, int sset);
+	void (*get_stats64)(struct dsa_switch *ds, int port,
+			    struct rtnl_link_stats64 *stats);
+	void (*get_eth_mac_stats)(struct dsa_switch *ds, int port,
+				  struct ethtool_eth_mac_stats *stats);
+	void (*get_eth_ctrl_stats)(struct dsa_switch *ds, int port,
+				   struct ethtool_eth_ctrl_stats *stats);
+	void (*get_rmon_stats)(struct dsa_switch *ds, int port,
+			       struct ethtool_rmon_stats *stats,
+			       const struct ethtool_rmon_hist_range **ranges);
+	void (*update)(struct mt7530_priv *priv);
+	unsigned int poll_interval_ms;
+	bool always_poll;
+};
 
 static struct mt753x_pcs *pcs_to_mt753x_pcs(struct phylink_pcs *pcs)
 {
@@ -86,9 +105,10 @@ static void mt7620_mib_update(struct mt7530_priv *priv)
 	spin_unlock_bh(&priv->stats_lock);
 }
 
-static void mt7620_get_stats64(struct mt7530_priv *priv, int port,
+static void mt7620_get_stats64(struct dsa_switch *ds, int port,
 			       struct rtnl_link_stats64 *stats)
 {
+	struct mt7530_priv *priv = ds->priv;
 	struct mt7530_mib_counter *m = priv->ports[port].mib;
 
 	spin_lock_bh(&priv->stats_lock);
@@ -806,6 +826,34 @@ mt753x_phy_write_c45(struct mii_bus *bus, int port, int devad, int regnum,
 	return priv->info->phy_write_c45(priv, port, devad, regnum, val);
 }
 
+static void mt7620_get_strings(struct dsa_switch *ds, int port, u32 stringset,
+			       u8 *data)
+{
+	int i;
+
+	if (stringset != ETH_SS_STATS)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++)
+		ethtool_puts(&data, mt7620_mib[i].name);
+}
+
+static int mt7620_get_sset_count(struct dsa_switch *ds, int port, int sset)
+{
+	return sset == ETH_SS_STATS ? ARRAY_SIZE(mt7620_mib) : 0;
+}
+
+static void mt7620_get_ethtool_stats(struct dsa_switch *ds, int port, u64 *data)
+{
+	struct mt7530_priv *priv = ds->priv;
+	int i;
+
+	spin_lock_bh(&priv->stats_lock);
+	for (i = 0; i < priv->info->num_mib_counters; i++)
+		data[i] = priv->ports[port].mib[i].value;
+	spin_unlock_bh(&priv->stats_lock);
+}
+
 static void
 mt7530_get_strings(struct dsa_switch *ds, int port, u32 stringset,
 		   uint8_t *data)
@@ -814,12 +862,6 @@ mt7530_get_strings(struct dsa_switch *ds, int port, u32 stringset,
 
 	if (stringset != ETH_SS_STATS)
 		return;
-
-	if (((struct mt7530_priv *)ds->priv)->id == ID_MT7620) {
-		for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++)
-			ethtool_puts(&data, mt7620_mib[i].name);
-		return;
-	}
 
 	for (i = 0; i < ARRAY_SIZE(mt7530_mib); i++)
 		ethtool_puts(&data, mt7530_mib[i].name);
@@ -848,14 +890,6 @@ mt7530_get_ethtool_stats(struct dsa_switch *ds, int port,
 	const struct mt7530_mib_desc *mib;
 	int i;
 
-	if (priv->id == ID_MT7620) {
-		spin_lock_bh(&priv->stats_lock);
-		for (i = 0; i < priv->info->num_mib_counters; i++)
-			data[i] = priv->ports[port].mib[i].value;
-		spin_unlock_bh(&priv->stats_lock);
-		return;
-	}
-
 	for (i = 0; i < ARRAY_SIZE(mt7530_mib); i++) {
 		mib = &mt7530_mib[i];
 
@@ -870,9 +904,6 @@ mt7530_get_sset_count(struct dsa_switch *ds, int port, int sset)
 	if (sset != ETH_SS_STATS)
 		return 0;
 
-	if (((struct mt7530_priv *)ds->priv)->id == ID_MT7620)
-		return ARRAY_SIZE(mt7620_mib);
-
 	return ARRAY_SIZE(mt7530_mib);
 }
 
@@ -880,9 +911,6 @@ static void mt7530_get_eth_mac_stats(struct dsa_switch *ds, int port,
 				     struct ethtool_eth_mac_stats *mac_stats)
 {
 	struct mt7530_priv *priv = ds->priv;
-
-	if (priv->id == ID_MT7620)
-		return;
 
 	/* MIB counter doesn't provide a FramesTransmittedOK but instead
 	 * provide stats for Unicast, Broadcast and Multicast frames separately.
@@ -949,9 +977,6 @@ static void mt7530_get_rmon_stats(struct dsa_switch *ds, int port,
 				  const struct ethtool_rmon_hist_range **ranges)
 {
 	struct mt7530_priv *priv = ds->priv;
-
-	if (priv->id == ID_MT7620)
-		return;
 
 	mt7530_read_port_stats(priv, port, MT7530_PORT_MIB_RX_UNDER_SIZE_ERR, 1,
 			       &rmon_stats->undersize_pkts);
@@ -1058,15 +1083,9 @@ static void mt7530_stats_poll(struct work_struct *work)
 	struct mt7530_priv *priv = container_of(work, struct mt7530_priv,
 						stats_work.work);
 
-	if (priv->id == ID_MT7620) {
-		mt7620_mib_update(priv);
-		schedule_delayed_work(&priv->stats_work, msecs_to_jiffies(20));
-		return;
-	}
-
-	mt7530_stats_refresh(priv);
+	priv->info->stats_ops->update(priv);
 	schedule_delayed_work(&priv->stats_work,
-			      MT7530_STATS_POLL_INTERVAL);
+			      msecs_to_jiffies(priv->info->stats_ops->poll_interval_ms));
 }
 
 static void mt7530_get_stats64(struct dsa_switch *ds, int port,
@@ -1074,11 +1093,6 @@ static void mt7530_get_stats64(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 	bool refresh;
-
-	if (priv->id == ID_MT7620) {
-		mt7620_get_stats64(priv, port, storage);
-		return;
-	}
 
 	if (priv->bus) {
 		spin_lock_bh(&priv->stats_lock);
@@ -1099,14 +1113,93 @@ static void mt7530_get_eth_ctrl_stats(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	if (priv->id == ID_MT7620)
-		return;
-
 	mt7530_read_port_stats(priv, port, MT7530_PORT_MIB_TX_PAUSE, 1,
 			       &ctrl_stats->MACControlFramesTransmitted);
 
 	mt7530_read_port_stats(priv, port, MT7530_PORT_MIB_RX_PAUSE, 1,
 			       &ctrl_stats->MACControlFramesReceived);
+}
+
+static const struct mt7530_stats_ops mt7620_stats_ops = {
+	.get_strings = mt7620_get_strings,
+	.get_ethtool_stats = mt7620_get_ethtool_stats,
+	.get_sset_count = mt7620_get_sset_count,
+	.get_stats64 = mt7620_get_stats64,
+	.update = mt7620_mib_update,
+	.poll_interval_ms = 20,
+	.always_poll = true,
+};
+
+static const struct mt7530_stats_ops mt7530_stats_ops = {
+	.get_strings = mt7530_get_strings,
+	.get_ethtool_stats = mt7530_get_ethtool_stats,
+	.get_sset_count = mt7530_get_sset_count,
+	.get_stats64 = mt7530_get_stats64,
+	.get_eth_mac_stats = mt7530_get_eth_mac_stats,
+	.get_eth_ctrl_stats = mt7530_get_eth_ctrl_stats,
+	.get_rmon_stats = mt7530_get_rmon_stats,
+	.update = mt7530_stats_refresh,
+	.poll_interval_ms = MT7530_STATS_POLL_INTERVAL_MS,
+};
+
+static void mt753x_get_strings(struct dsa_switch *ds, int port,
+			       u32 stringset, u8 *data)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	priv->info->stats_ops->get_strings(ds, port, stringset, data);
+}
+
+static void mt753x_get_ethtool_stats(struct dsa_switch *ds, int port,
+				     u64 *data)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	priv->info->stats_ops->get_ethtool_stats(ds, port, data);
+}
+
+static int mt753x_get_sset_count(struct dsa_switch *ds, int port,
+				 int sset)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	return priv->info->stats_ops->get_sset_count(ds, port, sset);
+}
+
+static void mt753x_get_stats64(struct dsa_switch *ds, int port,
+			       struct rtnl_link_stats64 *stats)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	priv->info->stats_ops->get_stats64(ds, port, stats);
+}
+
+static void mt753x_get_eth_mac_stats(struct dsa_switch *ds, int port,
+				     struct ethtool_eth_mac_stats *stats)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	if (priv->info->stats_ops->get_eth_mac_stats)
+		priv->info->stats_ops->get_eth_mac_stats(ds, port, stats);
+}
+
+static void mt753x_get_eth_ctrl_stats(struct dsa_switch *ds, int port,
+				      struct ethtool_eth_ctrl_stats *stats)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	if (priv->info->stats_ops->get_eth_ctrl_stats)
+		priv->info->stats_ops->get_eth_ctrl_stats(ds, port, stats);
+}
+
+static void mt753x_get_rmon_stats(struct dsa_switch *ds, int port,
+				  struct ethtool_rmon_stats *stats,
+				  const struct ethtool_rmon_hist_range **ranges)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	if (priv->info->stats_ops->get_rmon_stats)
+		priv->info->stats_ops->get_rmon_stats(ds, port, stats, ranges);
 }
 
 static int
@@ -3646,15 +3739,10 @@ mt753x_setup(struct dsa_switch *ds)
 	if (ret && priv->irq_domain)
 		mt7530_free_mdio_irq(priv);
 
-	if (!ret && priv->id == ID_MT7620) {
-		mt7620_mib_update(priv);
-		schedule_delayed_work(&priv->stats_work, msecs_to_jiffies(20));
-	}
-
-	if (!ret && priv->bus) {
-		mt7530_stats_refresh(priv);
+	if (!ret && (priv->bus || priv->info->stats_ops->always_poll)) {
+		priv->info->stats_ops->update(priv);
 		schedule_delayed_work(&priv->stats_work,
-				      MT7530_STATS_POLL_INTERVAL);
+				      msecs_to_jiffies(priv->info->stats_ops->poll_interval_ms));
 	}
 
 	return ret;
@@ -3667,7 +3755,7 @@ mt753x_teardown(struct dsa_switch *ds)
 
 	if (priv->info->irq_teardown)
 		priv->info->irq_teardown(priv);
-	if (priv->bus || priv->id == ID_MT7620)
+	if (priv->bus || priv->info->stats_ops->always_poll)
 		cancel_delayed_work_sync(&priv->stats_work);
 }
 
@@ -3840,13 +3928,13 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.teardown		= mt753x_teardown,
 	.preferred_default_local_cpu_port = mt753x_preferred_default_local_cpu_port,
 	.port_change_conduit	= mt753x_port_change_conduit,
-	.get_strings		= mt7530_get_strings,
-	.get_ethtool_stats	= mt7530_get_ethtool_stats,
-	.get_sset_count		= mt7530_get_sset_count,
-	.get_eth_mac_stats	= mt7530_get_eth_mac_stats,
-	.get_rmon_stats		= mt7530_get_rmon_stats,
-	.get_eth_ctrl_stats	= mt7530_get_eth_ctrl_stats,
-	.get_stats64		= mt7530_get_stats64,
+	.get_strings		= mt753x_get_strings,
+	.get_ethtool_stats	= mt753x_get_ethtool_stats,
+	.get_sset_count		= mt753x_get_sset_count,
+	.get_eth_mac_stats	= mt753x_get_eth_mac_stats,
+	.get_rmon_stats		= mt753x_get_rmon_stats,
+	.get_eth_ctrl_stats	= mt753x_get_eth_ctrl_stats,
+	.get_stats64		= mt753x_get_stats64,
 	.set_ageing_time	= mt7530_set_ageing_time,
 	.port_enable		= mt7530_port_enable,
 	.port_disable		= mt7530_port_disable,
@@ -3895,6 +3983,7 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 const struct mt753x_info mt753x_table[] = {
 	[ID_MT7620] = {
 		.id = ID_MT7620,
+		.stats_ops = &mt7620_stats_ops,
 		.setup_mdio = mt7620_setup_mdio,
 		.irq_teardown = mt7620_mask_irq,
 		.port_irq_enable = mt7620_port_irq_enable,
@@ -3915,6 +4004,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7621] = {
 		.id = ID_MT7621,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -3934,6 +4024,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7530] = {
 		.id = ID_MT7530,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -3953,6 +4044,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7531] = {
 		.id = ID_MT7531,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -3973,6 +4065,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7988] = {
 		.id = ID_MT7988,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -3992,6 +4085,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7581] = {
 		.id = ID_EN7581,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -4011,6 +4105,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_AN7583] = {
 		.id = ID_AN7583,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
@@ -4030,6 +4125,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7528] = {
 		.id = ID_EN7528,
+		.stats_ops = &mt7530_stats_ops,
 		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.phy_iac = MT7531_PHY_IAC,

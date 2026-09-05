@@ -872,6 +872,7 @@ struct mt753x_pcs {
  * @phylink_mac_ops:	MAC link management operations
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
+ * @stats_ops:		Counter layout, readout and polling operations
  * @setup_mdio:		Register the internal MDIO bus and its interrupt source
  * @irq_teardown:	Quiesce the link interrupt source before teardown
  * @port_irq_enable:	Enable link interrupts when a user port opens
@@ -897,6 +898,7 @@ struct mt753x_info {
 	unsigned int num_mib_counters;
 	unsigned int num_vlan_entries;
 
+	const struct mt7530_stats_ops *stats_ops;
 	const struct phylink_mac_ops *phylink_mac_ops;
 	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;

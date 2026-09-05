@@ -1841,22 +1841,52 @@ mt7530_port_bridge_join(struct dsa_switch *ds, int port,
 	return 0;
 }
 
+static int mt7620_vlan_index(struct mt7530_priv *priv, u16 vid)
+{
+	int slot;
+
+	for (slot = 0; slot < priv->info->num_vlan_entries; slot++)
+		if ((priv->vlan_used & BIT(slot)) && priv->vlan_ids[slot] == vid)
+			return slot;
+
+	return -ENOENT;
+}
+
+static int mt7620_vlan_prepare(struct mt7530_priv *priv, u16 vid, bool *allocated)
+{
+	int slot;
+
+	slot = mt7620_vlan_index(priv, vid);
+	if (slot >= 0)
+		return slot;
+
+	for (slot = 1; slot < priv->info->num_vlan_entries; slot++)
+		if (!(priv->vlan_used & BIT(slot)))
+			break;
+	if (slot == priv->info->num_vlan_entries)
+		return -ENOSPC;
+
+	priv->vlan_ids[slot] = vid;
+	priv->vlan_used |= BIT(slot);
+	*allocated = true;
+	regmap_update_bits(priv->regmap, MT7620_VTIM(slot),
+			   0xfff << ((slot % 2) * 12),
+			   vid << ((slot % 2) * 12));
+
+	return slot;
+}
+
 static int
 mt7530_vlan_cmd(struct mt7530_priv *priv, enum mt7530_vlan_cmd cmd, u16 vid)
 {
 	u32 val;
 	int ret;
 
-	if (priv->id == ID_MT7620) {
-		int slot;
-
-		for (slot = 0; slot < MT7620_NUM_VLANS; slot++)
-			if ((priv->vlan_used & BIT(slot)) &&
-			    priv->vlan_ids[slot] == vid)
-				break;
-		if (slot == MT7620_NUM_VLANS)
-			return -ENOENT;
-		vid = slot;
+	if (priv->info->vlan_index) {
+		ret = priv->info->vlan_index(priv, vid);
+		if (ret < 0)
+			return ret;
+		vid = ret;
 	}
 
 	val = VTCR_BUSY | VTCR_FUNC(cmd) | VTCR_VID(vid);
@@ -2252,26 +2282,13 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 
 	mutex_lock(&priv->reg_mutex);
 
-	if (priv->id == ID_MT7620 && vlan->vid) {
-		for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-			if ((priv->vlan_used & BIT(slot)) &&
-			    priv->vlan_ids[slot] == vlan->vid)
-				break;
-		if (slot == MT7620_NUM_VLANS) {
-			for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-				if (!(priv->vlan_used & BIT(slot)))
-					break;
-			if (slot == MT7620_NUM_VLANS) {
-				NL_SET_ERR_MSG_MOD(extack, "MT7620 VLAN table is full");
-				ret = -ENOSPC;
-				goto out;
-			}
-			priv->vlan_ids[slot] = vlan->vid;
-			priv->vlan_used |= BIT(slot);
-			allocated = true;
-			regmap_update_bits(priv->regmap, MT7620_VTIM(slot),
-					   0xfff << ((slot % 2) * 12),
-					   vlan->vid << ((slot % 2) * 12));
+	if (priv->info->vlan_prepare && vlan->vid) {
+		slot = priv->info->vlan_prepare(priv, vlan->vid, &allocated);
+		if (slot < 0) {
+			if (slot == -ENOSPC)
+				NL_SET_ERR_MSG_MOD(extack, "VLAN table is full");
+			ret = slot;
+			goto out;
 		}
 	}
 
@@ -2333,12 +2350,9 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 
 	mutex_lock(&priv->reg_mutex);
 
-	if (priv->id == ID_MT7620 && vlan->vid) {
-		for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-			if ((priv->vlan_used & BIT(slot)) &&
-			    priv->vlan_ids[slot] == vlan->vid)
-				break;
-		if (slot == MT7620_NUM_VLANS)
+	if (priv->info->vlan_index && vlan->vid) {
+		slot = priv->info->vlan_index(priv, vlan->vid);
+		if (slot < 0)
 			goto out;
 	}
 
@@ -2369,7 +2383,7 @@ skip_vlan_table:
 				   G0_PORT_VID_MASK, G0_PORT_VID_DEF);
 	}
 
-	if (slot > 0 && slot < MT7620_NUM_VLANS) {
+	if (slot > 0 && slot < priv->info->num_vlan_entries) {
 		u32 val;
 
 		regmap_read(priv->regmap, MT7530_VAWD1, &val);
@@ -3997,6 +4011,8 @@ const struct mt753x_info mt753x_table[] = {
 		.reset_name = "esw",
 		.num_mib_counters = ARRAY_SIZE(mt7620_mib),
 		.num_vlan_entries = MT7620_NUM_VLANS,
+		.vlan_index = mt7620_vlan_index,
+		.vlan_prepare = mt7620_vlan_prepare,
 		.sw_setup = mt7620_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
 		.phy_write_c22 = mt7531_ind_c22_phy_write,

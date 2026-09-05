@@ -5230,8 +5230,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
 	    (eth->chip_rev & GENMASK(3, 0)) >= 5)
-		features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
-			    NETIF_F_IPV6_CSUM;
+		features |= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO |
+			    NETIF_F_TSO6 | NETIF_F_IPV6_CSUM;
 
 	eth->netdev[id]->hw_features = features;
 	if (eth->hwlro)
@@ -5942,7 +5942,7 @@ static const struct mtk_soc_data mt7620_data = {
 	.reg_map = &mt7620_reg_map,
 	.caps = MT7620_CAPS,
 	.required_clks = BIT_ULL(MTK_CLK_FE),
-	.hw_features = NETIF_F_IP_CSUM | NETIF_F_RXCSUM,
+	.hw_features = NETIF_F_RXCSUM,
 	.version = 1,
 	.tx = {
 		.desc_size = sizeof(struct mtk_tx_dma),

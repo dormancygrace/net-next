@@ -46,7 +46,7 @@ mt7988_probe(struct platform_device *pdev)
 		return ret;
 
 	priv->rstc = devm_reset_control_get(&pdev->dev,
-					    priv->id == ID_MT7620 ? "esw" : NULL);
+					    priv->info->reset_name);
 	if (IS_ERR(priv->rstc)) {
 		dev_err(&pdev->dev, "Couldn't get our reset line\n");
 		return PTR_ERR(priv->rstc);

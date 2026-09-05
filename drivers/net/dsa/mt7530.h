@@ -854,6 +854,13 @@ struct mt753x_pcs {
 /* struct mt753x_info -	This is the main data structure for holding the specific
  *			part for each supported device
  * @id:			Holding the identifier to a switch model
+ * @phy_iac:		Indirect PHY access register
+ * @gmaccr:		Global receive frame length register
+ * @max_mtu:		Maximum supported IP MTU
+ * @tag_protocol:	CPU port tagging protocol
+ * @tag_len:		In-band CPU port tag length
+ * @cpu_vlan_egress:	VLAN egress mode of the CPU port
+ * @reset_name:		Name of the MMIO switch reset, or NULL
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
@@ -866,6 +873,13 @@ struct mt753x_pcs {
  */
 struct mt753x_info {
 	enum mt753x_id id;
+	u32 phy_iac;
+	u32 gmaccr;
+	unsigned int max_mtu;
+	enum dsa_tag_protocol tag_protocol;
+	u8 tag_len;
+	u8 cpu_vlan_egress;
+	const char *reset_name;
 
 	const struct phylink_pcs_ops *pcs_ops;
 

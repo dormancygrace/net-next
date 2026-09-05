@@ -233,11 +233,6 @@ static void mt7620_mac_port_get_caps(struct dsa_switch *ds, int port,
 	}
 }
 
-static u32 mt753x_phy_iac(struct mt7530_priv *priv)
-{
-	return priv->id == ID_MT7620 ? MT7620_PHY_IAC : MT7531_PHY_IAC;
-}
-
 static const struct mt7530_mib_desc mt7530_mib[] = {
 	MIB_DESC(1, MT7530_PORT_MIB_TX_DROP, "TxDrop"),
 	MIB_DESC(1, MT7530_PORT_MIB_TX_CRC_ERR, "TxCrcErr"),
@@ -694,7 +689,7 @@ mt7531_ind_c45_phy_read(struct mt7530_priv *priv, int port, int devad,
 
 	mutex_lock(&priv->reg_mutex);
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -703,12 +698,12 @@ mt7531_ind_c45_phy_read(struct mt7530_priv *priv, int port, int devad,
 
 	reg = MT7531_MDIO_CL45_ADDR | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_DEV_ADDR(devad) | regnum;
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   reg | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -717,12 +712,12 @@ mt7531_ind_c45_phy_read(struct mt7530_priv *priv, int port, int devad,
 
 	reg = MT7531_MDIO_CL45_READ | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_DEV_ADDR(devad);
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   reg | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -745,7 +740,7 @@ mt7531_ind_c45_phy_write(struct mt7530_priv *priv, int port, int devad,
 
 	mutex_lock(&priv->reg_mutex);
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -754,12 +749,12 @@ mt7531_ind_c45_phy_write(struct mt7530_priv *priv, int port, int devad,
 
 	reg = MT7531_MDIO_CL45_ADDR | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_DEV_ADDR(devad) | regnum;
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   reg | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -768,12 +763,12 @@ mt7531_ind_c45_phy_write(struct mt7530_priv *priv, int port, int devad,
 
 	reg = MT7531_MDIO_CL45_WRITE | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_DEV_ADDR(devad) | data;
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   reg | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -794,7 +789,7 @@ mt7531_ind_c22_phy_read(struct mt7530_priv *priv, int port, int regnum)
 
 	mutex_lock(&priv->reg_mutex);
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -804,12 +799,12 @@ mt7531_ind_c22_phy_read(struct mt7530_priv *priv, int port, int regnum)
 	val = MT7531_MDIO_CL22_READ | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_REG_ADDR(regnum);
 
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   val | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), val,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, val,
 				       !(val & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -832,7 +827,7 @@ mt7531_ind_c22_phy_write(struct mt7530_priv *priv, int port, int regnum,
 
 	mutex_lock(&priv->reg_mutex);
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), reg,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, reg,
 				       !(reg & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -842,12 +837,12 @@ mt7531_ind_c22_phy_write(struct mt7530_priv *priv, int port, int regnum,
 	reg = MT7531_MDIO_CL22_WRITE | MT7531_MDIO_PHY_ADDR(port) |
 	      MT7531_MDIO_REG_ADDR(regnum) | data;
 
-	ret = regmap_write(priv->regmap, mt753x_phy_iac(priv),
+	ret = regmap_write(priv->regmap, priv->info->phy_iac,
 			   reg | MT7531_PHY_ACS_ST);
 	if (ret < 0)
 		goto out;
 
-	ret = regmap_read_poll_timeout(priv->regmap, mt753x_phy_iac(priv), reg,
+	ret = regmap_read_poll_timeout(priv->regmap, priv->info->phy_iac, reg,
 				       !(reg & MT7531_PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
@@ -1636,7 +1631,7 @@ static int
 mt7530_port_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 reg = priv->id == ID_MT7620 ? MT7620_GMACCR : MT7530_GMACCR;
+	u32 reg = priv->info->gmaccr;
 	int length;
 	u32 val;
 
@@ -1650,10 +1645,8 @@ mt7530_port_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
 	regmap_read(priv->regmap, reg, &val);
 	val &= ~MAX_RX_PKT_LEN_MASK;
 
-	/* RX length also includes Ethernet header, MTK tag, and FCS length */
-	length = new_mtu + ETH_HLEN + ETH_FCS_LEN;
-	if (priv->id != ID_MT7620)
-		length += MTK_HDR_LEN;
+	/* Include the Ethernet header, any in-band CPU tag, and FCS. */
+	length = new_mtu + ETH_HLEN + priv->info->tag_len + ETH_FCS_LEN;
 	if (length <= 1522) {
 		val |= MAX_RX_PKT_LEN_1522;
 	} else if (length <= 1536) {
@@ -1676,7 +1669,7 @@ mt7530_port_max_mtu(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	return priv->id == ID_MT7620 ? MT7620_MAX_MTU : MT7530_MAX_MTU;
+	return priv->info->max_mtu;
 }
 
 static void
@@ -2165,16 +2158,11 @@ mt7530_hw_vlan_add(struct mt7530_priv *priv,
 	      VLAN_VALID;
 	regmap_write(priv->regmap, MT7530_VAWD1, val);
 
-	/* Decide whether adding tag or not for those outgoing packets from the
-	 * port inside the VLAN.
-	 * CPU port is always taken as a tagged port for serving more than one
-	 * VLANs across and also being applied with egress type stack mode for
-	 * that VLAN tags would be appended after hardware special tag used as
-	 * DSA tag.
+	/* CPU ports carry tagged VLANs. Switches with an in-band DSA tag
+	 * use stack mode to insert the VLAN header after the special tag.
 	 */
 	if (dsa_port_is_cpu(dp))
-		val = priv->id == ID_MT7620 ? MT7530_VLAN_EGRESS_TAG :
-			MT7530_VLAN_EGRESS_STACK;
+		val = priv->info->cpu_vlan_egress;
 	else if (entry->untagged)
 		val = MT7530_VLAN_EGRESS_UNTAG;
 	else
@@ -2448,7 +2436,7 @@ mtk_get_tag_protocol(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	return priv->id == ID_MT7620 ? DSA_TAG_PROTO_MTK_OOB : DSA_TAG_PROTO_MTK;
+	return priv->info->tag_protocol;
 }
 
 #ifdef CONFIG_GPIOLIB
@@ -3964,6 +3952,12 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 const struct mt753x_info mt753x_table[] = {
 	[ID_MT7620] = {
 		.id = ID_MT7620,
+		.phy_iac = MT7620_PHY_IAC,
+		.gmaccr = MT7620_GMACCR,
+		.max_mtu = MT7620_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK_OOB,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_TAG,
+		.reset_name = "esw",
 		.sw_setup = mt7620_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
 		.phy_write_c22 = mt7531_ind_c22_phy_write,
@@ -3971,6 +3965,11 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7621] = {
 		.id = ID_MT7621,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7530_setup,
 		.phy_read_c22 = mt7530_phy_read_c22,
@@ -3982,6 +3981,11 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7530] = {
 		.id = ID_MT7530,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7530_setup,
 		.phy_read_c22 = mt7530_phy_read_c22,
@@ -3993,6 +3997,12 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7531] = {
 		.id = ID_MT7531,
+		.phy_iac = MT7531_PHY_IAC,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7531_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
@@ -4004,6 +4014,12 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7988] = {
 		.id = ID_MT7988,
+		.phy_iac = MT7531_PHY_IAC,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7988_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
@@ -4014,6 +4030,12 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7581] = {
 		.id = ID_EN7581,
+		.phy_iac = MT7531_PHY_IAC,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7988_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
@@ -4024,6 +4046,12 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_AN7583] = {
 		.id = ID_AN7583,
+		.phy_iac = MT7531_PHY_IAC,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7988_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
@@ -4034,6 +4062,12 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7528] = {
 		.id = ID_EN7528,
+		.phy_iac = MT7531_PHY_IAC,
+		.gmaccr = MT7530_GMACCR,
+		.max_mtu = MT7530_MAX_MTU,
+		.tag_protocol = DSA_TAG_PROTO_MTK,
+		.tag_len = MTK_HDR_LEN,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
 		.pcs_ops = &mt7530_pcs_ops,
 		.sw_setup = mt7988_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,

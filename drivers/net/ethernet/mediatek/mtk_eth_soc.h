@@ -1354,6 +1354,7 @@ struct mtk_eth {
 	struct rhashtable		flow_table;
 
 	struct bpf_prog			__rcu *prog;
+	struct delayed_work		mt7620_stats_work;
 
 	struct {
 		struct delayed_work monitor_work;

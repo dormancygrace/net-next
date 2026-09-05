@@ -65,20 +65,8 @@ static const struct mt7620_mib_desc mt7620_mib[] = {
 	{ 0x30, 0, U16_MAX, "rx_filtered" },
 };
 
-struct mt7620_switch {
-	u16 vid[MT7620_NUM_VLANS];
-	u16 vlan_used;
-	u32 mib_last[MT7530_NUM_PORTS][ARRAY_SIZE(mt7620_mib)];
-	u64 mib[MT7530_NUM_PORTS][ARRAY_SIZE(mt7620_mib)];
-	struct regmap *sysc;
-	struct reset_control *rst_ephy;
-	struct mii_bus *mii_bus;
-	int irq;
-};
-
 static void mt7620_mib_update(struct mt7530_priv *priv)
 {
-	struct mt7620_switch *sw = priv->mt7620;
 	u32 val, delta;
 	int port, i;
 
@@ -90,9 +78,9 @@ static void mt7620_mib_update(struct mt7530_priv *priv)
 			regmap_read(priv->regmap, 0x4000 + port * 0x100 +
 				    m->offset, &val);
 			val = (val >> m->shift) & m->mask;
-			delta = (val - sw->mib_last[port][i]) & m->mask;
-			sw->mib[port][i] += delta;
-			sw->mib_last[port][i] = val;
+			delta = (val - priv->ports[port].mib[i].last) & m->mask;
+			priv->ports[port].mib[i].value += delta;
+			priv->ports[port].mib[i].last = val;
 		}
 	}
 	spin_unlock_bh(&priv->stats_lock);
@@ -101,17 +89,17 @@ static void mt7620_mib_update(struct mt7530_priv *priv)
 static void mt7620_get_stats64(struct mt7530_priv *priv, int port,
 			       struct rtnl_link_stats64 *stats)
 {
-	u64 *m = priv->mt7620->mib[port];
+	struct mt7530_mib_counter *m = priv->ports[port].mib;
 
 	spin_lock_bh(&priv->stats_lock);
-	stats->tx_packets = m[0];
-	stats->tx_errors = m[1];
-	stats->tx_bytes = m[3] - m[0] * ETH_FCS_LEN;
-	stats->tx_dropped = m[4];
-	stats->rx_packets = m[5];
-	stats->rx_errors = m[6];
-	stats->rx_bytes = m[8] - m[5] * ETH_FCS_LEN;
-	stats->rx_dropped = m[9] + m[10] + m[11] + m[12];
+	stats->tx_packets = m[0].value;
+	stats->tx_errors = m[1].value;
+	stats->tx_bytes = m[3].value - m[0].value * ETH_FCS_LEN;
+	stats->tx_dropped = m[4].value;
+	stats->rx_packets = m[5].value;
+	stats->rx_errors = m[6].value;
+	stats->rx_bytes = m[8].value - m[5].value * ETH_FCS_LEN;
+	stats->rx_dropped = m[9].value + m[10].value + m[11].value + m[12].value;
 	spin_unlock_bh(&priv->stats_lock);
 }
 
@@ -130,7 +118,7 @@ static irqreturn_t mt7620_link_irq(int irq, void *data)
 	regmap_write(priv->regmap, MT7620_ISR, status);
 
 	for (port = 0; port < MT7530_NUM_PHYS; port++) {
-		phydev = mdiobus_get_phy(priv->mt7620->mii_bus, port);
+		phydev = mdiobus_get_phy(priv->internal_mdio, port);
 		if ((status & BIT(port)) && phydev)
 			phy_mac_interrupt(phydev);
 	}
@@ -143,7 +131,7 @@ static void mt7620_mask_irq(void *data)
 	struct mt7530_priv *priv = data;
 
 	regmap_write(priv->regmap, MT7620_IMR, ~0);
-	synchronize_irq(priv->mt7620->irq);
+	synchronize_irq(priv->irq);
 }
 
 /* Values from the Ralink MT7620 EPHY initialization sequence, also used by
@@ -178,7 +166,7 @@ static int mt7620_ephy_init(struct mt7530_priv *priv)
 	u32 rev;
 	int i, ret;
 
-	ret = regmap_read(priv->mt7620->sysc, 0x0c, &rev);
+	ret = regmap_read(priv->sysc, 0x0c, &rev);
 	if (ret)
 		return ret;
 
@@ -938,8 +926,8 @@ mt7530_get_ethtool_stats(struct dsa_switch *ds, int port,
 
 	if (priv->id == ID_MT7620) {
 		spin_lock_bh(&priv->stats_lock);
-		memcpy(data, priv->mt7620->mib[port],
-		       sizeof(priv->mt7620->mib[port]));
+		for (i = 0; i < priv->info->num_mib_counters; i++)
+			data[i] = priv->ports[port].mib[i].value;
 		spin_unlock_bh(&priv->stats_lock);
 		return;
 	}
@@ -1603,7 +1591,7 @@ mt7530_port_disable(struct dsa_switch *ds, int port)
 
 	if (priv->id == ID_MT7620 && port < MT7530_NUM_PHYS) {
 		regmap_set_bits(priv->regmap, MT7620_IMR, BIT(port));
-		synchronize_irq(priv->mt7620->irq);
+		synchronize_irq(priv->irq);
 	}
 
 	mutex_lock(&priv->reg_mutex);
@@ -1832,11 +1820,11 @@ mt7530_vlan_cmd(struct mt7530_priv *priv, enum mt7530_vlan_cmd cmd, u16 vid)
 	int ret;
 
 	if (priv->id == ID_MT7620) {
-		struct mt7620_switch *sw = priv->mt7620;
 		int slot;
 
 		for (slot = 0; slot < MT7620_NUM_VLANS; slot++)
-			if ((sw->vlan_used & BIT(slot)) && sw->vid[slot] == vid)
+			if ((priv->vlan_used & BIT(slot)) &&
+			    priv->vlan_ids[slot] == vid)
 				break;
 		if (slot == MT7620_NUM_VLANS)
 			return -ENOENT;
@@ -2237,22 +2225,21 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 	mutex_lock(&priv->reg_mutex);
 
 	if (priv->id == ID_MT7620 && vlan->vid) {
-		struct mt7620_switch *sw = priv->mt7620;
-
 		for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-			if ((sw->vlan_used & BIT(slot)) && sw->vid[slot] == vlan->vid)
+			if ((priv->vlan_used & BIT(slot)) &&
+			    priv->vlan_ids[slot] == vlan->vid)
 				break;
 		if (slot == MT7620_NUM_VLANS) {
 			for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-				if (!(sw->vlan_used & BIT(slot)))
+				if (!(priv->vlan_used & BIT(slot)))
 					break;
 			if (slot == MT7620_NUM_VLANS) {
 				NL_SET_ERR_MSG_MOD(extack, "MT7620 VLAN table is full");
 				ret = -ENOSPC;
 				goto out;
 			}
-			sw->vid[slot] = vlan->vid;
-			sw->vlan_used |= BIT(slot);
+			priv->vlan_ids[slot] = vlan->vid;
+			priv->vlan_used |= BIT(slot);
 			allocated = true;
 			regmap_update_bits(priv->regmap, MT7620_VTIM(slot),
 					   0xfff << ((slot % 2) * 12),
@@ -2302,7 +2289,7 @@ skip_vlan_table:
 
 out:
 	if (ret && allocated)
-		priv->mt7620->vlan_used &= ~BIT(slot);
+		priv->vlan_used &= ~BIT(slot);
 	mutex_unlock(&priv->reg_mutex);
 
 	return ret;
@@ -2319,10 +2306,9 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	mutex_lock(&priv->reg_mutex);
 
 	if (priv->id == ID_MT7620 && vlan->vid) {
-		struct mt7620_switch *sw = priv->mt7620;
-
 		for (slot = 1; slot < MT7620_NUM_VLANS; slot++)
-			if ((sw->vlan_used & BIT(slot)) && sw->vid[slot] == vlan->vid)
+			if ((priv->vlan_used & BIT(slot)) &&
+			    priv->vlan_ids[slot] == vlan->vid)
 				break;
 		if (slot == MT7620_NUM_VLANS)
 			goto out;
@@ -2360,7 +2346,7 @@ skip_vlan_table:
 
 		regmap_read(priv->regmap, MT7530_VAWD1, &val);
 		if (!(val & VLAN_VALID))
-			priv->mt7620->vlan_used &= ~BIT(slot);
+			priv->vlan_used &= ~BIT(slot);
 	}
 
 out:
@@ -2696,7 +2682,7 @@ mt7530_setup_mdio(struct mt7530_priv *priv)
 
 		for (port = 0; port < MT7530_NUM_PHYS; port++)
 			bus->irq[port] = PHY_MAC_INTERRUPT;
-		priv->mt7620->mii_bus = bus;
+		priv->internal_mdio = bus;
 	}
 
 	ret = devm_of_mdiobus_register(dev, bus, mnp);
@@ -3553,26 +3539,21 @@ static const struct phylink_pcs_ops mt7530_pcs_ops = {
 static int mt7620_setup(struct dsa_switch *ds)
 {
 	struct mt7530_priv *priv = ds->priv;
-	struct mt7620_switch *sw;
 	int ret, port;
 
 	if (!dsa_is_cpu_port(ds, 6) || dsa_is_user_port(ds, 5))
 		return -EINVAL;
 
-	sw = devm_kzalloc(priv->dev, sizeof(*sw), GFP_KERNEL);
-	if (!sw)
-		return -ENOMEM;
-	sw->sysc = syscon_regmap_lookup_by_phandle(priv->dev->of_node,
-						   "mediatek,sysc");
-	if (IS_ERR(sw->sysc))
-		return PTR_ERR(sw->sysc);
-	sw->rst_ephy = devm_reset_control_get_exclusive(priv->dev, "ephy");
-	if (IS_ERR(sw->rst_ephy))
-		return PTR_ERR(sw->rst_ephy);
-	sw->irq = of_irq_get(priv->dev->of_node, 0);
-	if (sw->irq <= 0)
-		return sw->irq ?: -EINVAL;
-	priv->mt7620 = sw;
+	priv->sysc = syscon_regmap_lookup_by_phandle(priv->dev->of_node,
+						     "mediatek,sysc");
+	if (IS_ERR(priv->sysc))
+		return PTR_ERR(priv->sysc);
+	priv->rst_ephy = devm_reset_control_get_exclusive(priv->dev, "ephy");
+	if (IS_ERR(priv->rst_ephy))
+		return PTR_ERR(priv->rst_ephy);
+	priv->irq = of_irq_get(priv->dev->of_node, 0);
+	if (priv->irq <= 0)
+		return priv->irq ?: -EINVAL;
 
 	ret = reset_control_assert(priv->rstc);
 	if (ret)
@@ -3583,8 +3564,15 @@ static int mt7620_setup(struct dsa_switch *ds)
 		return ret;
 	usleep_range(1000, 1200);
 
+	/* A new setup resets hardware counters even if probe state is reused. */
+	spin_lock_bh(&priv->stats_lock);
+	for (port = 0; port < MT7530_NUM_PORTS; port++)
+		memset(priv->ports[port].mib, 0,
+		       priv->info->num_mib_counters * sizeof(*priv->ports[port].mib));
+	spin_unlock_bh(&priv->stats_lock);
+
 	/* Integrated Ethernet requires RC mode and port 4's embedded PHY. */
-	ret = regmap_update_bits(sw->sysc, 0x14, BIT(8) | GENMASK(15, 14),
+	ret = regmap_update_bits(priv->sysc, 0x14, BIT(8) | GENMASK(15, 14),
 				 BIT(8) | GENMASK(15, 14));
 	if (ret)
 		return ret;
@@ -3595,7 +3583,7 @@ static int mt7620_setup(struct dsa_switch *ds)
 	regmap_clear_bits(priv->regmap, 0x7014, GENMASK(28, 24) |
 			  GENMASK(20, 16));
 
-	ret = reset_control_reset(sw->rst_ephy);
+	ret = reset_control_reset(priv->rst_ephy);
 	if (ret)
 		return ret;
 
@@ -3651,8 +3639,8 @@ static int mt7620_setup(struct dsa_switch *ds)
 		if (ret)
 			return ret;
 	}
-	sw->vlan_used = BIT(0);
-	sw->vid[0] = 0;
+	priv->vlan_used = BIT(0);
+	priv->vlan_ids[0] = 0;
 	regmap_update_bits(priv->regmap, MT7620_VTIM(0), GENMASK(11, 0), 0);
 	ret = mt7530_setup_vlan0(priv);
 	if (ret)
@@ -3684,9 +3672,9 @@ mt753x_setup(struct dsa_switch *ds)
 
 	if (priv->id == ID_MT7620) {
 		/* The MDIO bus must outlive the handler, including probe unwind. */
-		if (!priv->mt7620->mii_bus)
+		if (!priv->internal_mdio)
 			return -ENODEV;
-		ret = devm_request_threaded_irq(priv->dev, priv->mt7620->irq,
+		ret = devm_request_threaded_irq(priv->dev, priv->irq,
 						NULL, mt7620_link_irq, IRQF_ONESHOT,
 						dev_name(priv->dev), priv);
 		if (ret)
@@ -3958,6 +3946,8 @@ const struct mt753x_info mt753x_table[] = {
 		.tag_protocol = DSA_TAG_PROTO_MTK_OOB,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_TAG,
 		.reset_name = "esw",
+		.num_mib_counters = ARRAY_SIZE(mt7620_mib),
+		.num_vlan_entries = MT7620_NUM_VLANS,
 		.sw_setup = mt7620_setup,
 		.phy_read_c22 = mt7531_ind_c22_phy_read,
 		.phy_write_c22 = mt7531_ind_c22_phy_write,
@@ -4083,6 +4073,7 @@ int
 mt7530_probe_common(struct mt7530_priv *priv)
 {
 	struct device *dev = priv->dev;
+	int port;
 
 	priv->ds = devm_kzalloc(dev, sizeof(*priv->ds), GFP_KERNEL);
 	if (!priv->ds)
@@ -4097,6 +4088,24 @@ mt7530_probe_common(struct mt7530_priv *priv)
 	priv->info = of_device_get_match_data(dev);
 	if (!priv->info)
 		return -EINVAL;
+
+	if (priv->info->num_vlan_entries) {
+		priv->vlan_ids = devm_kcalloc(dev, priv->info->num_vlan_entries,
+					      sizeof(*priv->vlan_ids), GFP_KERNEL);
+		if (!priv->vlan_ids)
+			return -ENOMEM;
+	}
+
+	if (priv->info->num_mib_counters) {
+		for (port = 0; port < MT7530_NUM_PORTS; port++) {
+			priv->ports[port].mib =
+				devm_kcalloc(dev, priv->info->num_mib_counters,
+					     sizeof(*priv->ports[port].mib),
+					     GFP_KERNEL);
+			if (!priv->ports[port].mib)
+				return -ENOMEM;
+		}
+	}
 
 	priv->id = priv->info->id;
 	priv->dev = dev;

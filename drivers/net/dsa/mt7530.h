@@ -869,6 +869,8 @@ struct mt753x_pcs {
  * @reset_name:		Name of the MMIO switch reset, or NULL
  * @num_mib_counters:	Number of narrow counters requiring software extension
  * @num_vlan_entries:	Size of the VID mapping table, or zero for direct indexing
+ * @phylink_mac_ops:	MAC link management operations
+ * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
@@ -891,6 +893,8 @@ struct mt753x_info {
 	unsigned int num_mib_counters;
 	unsigned int num_vlan_entries;
 
+	const struct phylink_mac_ops *phylink_mac_ops;
+	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;
 
 	int (*sw_setup)(struct dsa_switch *ds);

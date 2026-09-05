@@ -3216,15 +3216,50 @@ mt7531_mac_config(struct dsa_switch *ds, int port, unsigned int mode,
 	}
 }
 
+static void mt7620_phylink_mac_config(struct phylink_config *config,
+				      unsigned int mode,
+				      const struct phylink_link_state *state)
+{
+	/* Integrated PHY status is synchronized by the switch's PPSC. */
+}
+
+static void mt7620_phylink_mac_link_down(struct phylink_config *config,
+					 unsigned int mode,
+					 phy_interface_t interface)
+{
+	struct dsa_port *dp = dsa_phylink_to_port(config);
+	struct mt7530_priv *priv = dp->ds->priv;
+
+	if (dp->index == 6)
+		return;
+	regmap_clear_bits(priv->regmap, MT753X_PMCR_P(dp->index),
+			  PMCR_MAC_TX_EN | PMCR_MAC_RX_EN);
+}
+
+static void mt7620_phylink_mac_link_up(struct phylink_config *config,
+				       struct phy_device *phydev,
+				       unsigned int mode,
+				       phy_interface_t interface,
+				       int speed, int duplex,
+				       bool tx_pause, bool rx_pause)
+{
+	struct dsa_port *dp = dsa_phylink_to_port(config);
+	struct mt7530_priv *priv = dp->ds->priv;
+
+	if (dp->index == 6)
+		return;
+	regmap_write(priv->regmap, MT753X_PMCR_P(dp->index),
+		     PMCR_IFG_XMIT(1) | PMCR_MAC_MODE |
+		     PMCR_MAC_TX_EN | PMCR_MAC_RX_EN |
+		     PMCR_BACKOFF_EN | PMCR_BACKPR_EN);
+}
+
 static struct phylink_pcs *
 mt753x_phylink_mac_select_pcs(struct phylink_config *config,
 			      phy_interface_t interface)
 {
 	struct dsa_port *dp = dsa_phylink_to_port(config);
 	struct mt7530_priv *priv = dp->ds->priv;
-
-	if (priv->id == ID_MT7620)
-		return NULL;
 
 	switch (interface) {
 	case PHY_INTERFACE_MODE_TRGMII:
@@ -3249,9 +3284,6 @@ mt753x_phylink_mac_config(struct phylink_config *config, unsigned int mode,
 
 	priv = ds->priv;
 
-	if (priv->id == ID_MT7620)
-		return;
-
 	if ((port == 5 || port == 6) && priv->info->mac_port_config)
 		priv->info->mac_port_config(ds, port, mode, state->interface);
 
@@ -3268,14 +3300,6 @@ static void mt753x_phylink_mac_link_down(struct phylink_config *config,
 	struct dsa_port *dp = dsa_phylink_to_port(config);
 	struct mt7530_priv *priv = dp->ds->priv;
 
-	if (priv->id == ID_MT7620) {
-		if (dp->index == 6)
-			return;
-		regmap_clear_bits(priv->regmap, MT753X_PMCR_P(dp->index),
-				  PMCR_MAC_TX_EN | PMCR_MAC_RX_EN);
-		return;
-	}
-
 	regmap_clear_bits(priv->regmap, MT753X_PMCR_P(dp->index),
 			  PMCR_LINK_SETTINGS_MASK);
 }
@@ -3290,16 +3314,6 @@ static void mt753x_phylink_mac_link_up(struct phylink_config *config,
 	struct dsa_port *dp = dsa_phylink_to_port(config);
 	struct mt7530_priv *priv = dp->ds->priv;
 	u32 mcr;
-
-	if (priv->id == ID_MT7620) {
-		if (dp->index == 6)
-			return;
-		regmap_write(priv->regmap, MT753X_PMCR_P(dp->index),
-			     PMCR_IFG_XMIT(1) | PMCR_MAC_MODE |
-			     PMCR_MAC_TX_EN | PMCR_MAC_RX_EN |
-			     PMCR_BACKOFF_EN | PMCR_BACKPR_EN);
-		return;
-	}
 
 	mcr = PMCR_MAC_RX_EN | PMCR_MAC_TX_EN | PMCR_FORCE_LNK;
 
@@ -3329,9 +3343,6 @@ static void mt753x_phylink_mac_disable_tx_lpi(struct phylink_config *config)
 	struct dsa_port *dp = dsa_phylink_to_port(config);
 	struct mt7530_priv *priv = dp->ds->priv;
 
-	if (priv->id == ID_MT7620)
-		return;
-
 	regmap_clear_bits(priv->regmap, MT753X_PMCR_P(dp->index),
 			  PMCR_FORCE_EEE1G | PMCR_FORCE_EEE100);
 }
@@ -3342,9 +3353,6 @@ static int mt753x_phylink_mac_enable_tx_lpi(struct phylink_config *config,
 	struct dsa_port *dp = dsa_phylink_to_port(config);
 	struct mt7530_priv *priv = dp->ds->priv;
 	u32 val;
-
-	if (priv->id == ID_MT7620)
-		return -EOPNOTSUPP;
 
 	/* If the timer is zero, then set LPI_MODE_EN, which allows the
 	 * system to enter LPI mode immediately rather than waiting for
@@ -3379,12 +3387,12 @@ static void mt753x_phylink_get_caps(struct dsa_switch *ds, int port,
 	 * phylink disables EEE on these PHYs and refuses to enable it from
 	 * userspace.
 	 */
-	if (priv->id != ID_EN7528 && priv->id != ID_MT7620) {
+	if (priv->info->lpi_capabilities) {
 		u32 eeecr;
 
 		regmap_read(priv->regmap, MT753X_PMEEECR_P(port), &eeecr);
 
-		config->lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD;
+		config->lpi_capabilities = priv->info->lpi_capabilities;
 		/* tx_lpi_timer should be in microseconds. The time units for
 		 * LPI threshold are unspecified.
 		 */
@@ -3647,7 +3655,7 @@ static int mt753x_set_mac_eee(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	if (priv->id == ID_MT7620)
+	if (!priv->info->phylink_mac_ops->mac_enable_tx_lpi)
 		return -EOPNOTSUPP;
 
 	if (e->tx_lpi_timer > 0xFFF)
@@ -3848,6 +3856,12 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.port_hsr_leave		= dsa_port_simple_hsr_leave,
 };
 
+static const struct phylink_mac_ops mt7620_phylink_mac_ops = {
+	.mac_config	= mt7620_phylink_mac_config,
+	.mac_link_down	= mt7620_phylink_mac_link_down,
+	.mac_link_up	= mt7620_phylink_mac_link_up,
+};
+
 static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 	.mac_select_pcs	= mt753x_phylink_mac_select_pcs,
 	.mac_config	= mt753x_phylink_mac_config,
@@ -3860,6 +3874,7 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 const struct mt753x_info mt753x_table[] = {
 	[ID_MT7620] = {
 		.id = ID_MT7620,
+		.phylink_mac_ops = &mt7620_phylink_mac_ops,
 		.phy_iac = MT7620_PHY_IAC,
 		.gmaccr = MT7620_GMACCR,
 		.max_mtu = MT7620_MAX_MTU,
@@ -3875,6 +3890,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7621] = {
 		.id = ID_MT7621,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
@@ -3891,6 +3908,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7530] = {
 		.id = ID_MT7530,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
@@ -3907,6 +3926,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7531] = {
 		.id = ID_MT7531,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3924,6 +3945,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7988] = {
 		.id = ID_MT7988,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3940,6 +3963,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7581] = {
 		.id = ID_EN7581,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3956,6 +3981,8 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_AN7583] = {
 		.id = ID_AN7583,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
+		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3972,6 +3999,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7528] = {
 		.id = ID_EN7528,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -4031,7 +4059,7 @@ mt7530_probe_common(struct mt7530_priv *priv)
 	priv->dev = dev;
 	priv->ds->priv = priv;
 	priv->ds->ops = &mt7530_switch_ops;
-	priv->ds->phylink_mac_ops = &mt753x_phylink_mac_ops;
+	priv->ds->phylink_mac_ops = priv->info->phylink_mac_ops;
 	mutex_init(&priv->reg_mutex);
 	spin_lock_init(&priv->stats_lock);
 	INIT_DELAYED_WORK(&priv->stats_work, mt7530_stats_poll);

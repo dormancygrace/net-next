@@ -110,6 +110,33 @@ static const struct mtk_reg_map mt7628_reg_map = {
 	},
 };
 
+/* MT7620 shares the legacy PDMA layout with MT7628, but has a normal
+ * GDMA/CDMA path in front of its integrated gigabit switch.
+ */
+static const struct mtk_reg_map mt7620_reg_map = {
+	.tx_irq_mask		= 0x0a28,
+	.tx_irq_status		= 0x0a20,
+	.pdma = {
+		.rx_ptr		= 0x0900,
+		.rx_cnt_cfg	= 0x0904,
+		.pcrx_ptr	= 0x0908,
+		.glo_cfg	= 0x0a04,
+		.rst_idx	= 0x0a08,
+		.delay_irq	= 0x0a0c,
+		.irq_status	= 0x0a20,
+		.irq_mask	= 0x0a28,
+		.int_grp	= 0x0a50,
+	},
+	.gdm1_cnt		= 0x1300,
+};
+
+#define MT7620_CDMA_CSG_CFG	0x0400
+#define MT7620_GDMA1_FWD_CFG	0x0600
+#define MT7620_CDMA_CSUM_EN	GENMASK(2, 0)
+#define MT7620_GDMA_CSUM_EN	GENMASK(22, 20)
+#define MT7620_PDMA_BT_16DWORDS	(2 << 4)
+#define MT7620_RX_DMA_L4_VALID	BIT(23)
+
 static const struct mtk_reg_map mt7986_reg_map = {
 	.tx_irq_mask		= 0x461c,
 	.tx_irq_status		= 0x4618,
@@ -563,6 +590,14 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 	int val, ge_mode, err = 0;
 	u32 i;
 
+	/* MT7620 terminates GDMA directly at its integrated switch and has no
+	 * standalone GMAC control block at MTK_MAC_MCR().
+	 */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		mac->interface = state->interface;
+		return;
+	}
+
 	if (mac->interface != state->interface) {
 		/* Setup soc pin functions */
 		switch (state->interface) {
@@ -698,6 +733,9 @@ static int mtk_mac_finish(struct phylink_config *config, unsigned int mode,
 	struct mtk_eth *eth = mac->hw;
 	u32 mcr_cur, mcr_new;
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return 0;
+
 	/* Enable SGMII */
 	if (interface == PHY_INTERFACE_MODE_SGMII ||
 	    phy_interface_mode_is_8023z(interface))
@@ -722,6 +760,9 @@ static void mtk_mac_link_down(struct phylink_config *config, unsigned int mode,
 {
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
+
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620))
+		return;
 
 	if (!mtk_interface_mode_is_xgmii(mac->hw, interface)) {
 		/* GMAC modes */
@@ -887,6 +928,11 @@ static void mtk_mac_link_up(struct phylink_config *config,
 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
 					   phylink_config);
 
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620)) {
+		mac->speed = speed;
+		return;
+	}
+
 	if (mtk_interface_mode_is_xgmii(mac->hw, interface))
 		mtk_xgdm_mac_link_up(mac, phy, mode, interface, speed, duplex,
 				     tx_pause, rx_pause);
@@ -901,6 +947,9 @@ static void mtk_mac_disable_tx_lpi(struct phylink_config *config)
 					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return;
+
 	mtk_m32(eth, MAC_MCR_EEE100M | MAC_MCR_EEE1G, 0, MTK_MAC_MCR(mac->id));
 }
 
@@ -911,6 +960,9 @@ static int mtk_mac_enable_tx_lpi(struct phylink_config *config, u32 timer,
 					   phylink_config);
 	struct mtk_eth *eth = mac->hw;
 	u32 val;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return -EOPNOTSUPP;
 
 	if (mtk_interface_mode_is_xgmii(eth, mac->interface))
 		return -EOPNOTSUPP;
@@ -1107,6 +1159,10 @@ static int mtk_set_mac_address(struct net_device *dev, void *p)
 	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
 		return -EBUSY;
 
+	/* MT7620 keeps the conduit MAC in the integrated switch. */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return 0;
+
 	spin_lock_bh(&mac->hw->page_lock);
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
 		mtk_w32(mac->hw, (macaddr[0] << 8) | macaddr[1],
@@ -1130,6 +1186,12 @@ void mtk_stats_update_mac(struct mtk_mac *mac)
 {
 	struct mtk_hw_stats *hw_stats = mac->hw_stats;
 	struct mtk_eth *eth = mac->hw;
+
+	/* MT7620 uses a different MIB layout. The switch driver owns those
+	 * counters, while the conduit keeps its software netdev counters.
+	 */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return;
 
 	u64_stats_update_begin(&hw_stats->syncp);
 
@@ -1214,6 +1276,11 @@ static void mtk_get_stats64(struct net_device *dev,
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_hw_stats *hw_stats = mac->hw_stats;
 	unsigned int start;
+
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620)) {
+		dev_get_tstats64(dev, storage);
+		return;
+	}
 
 	if (netif_running(dev) && netif_device_present(dev)) {
 		if (spin_trylock_bh(&hw_stats->stats_lock)) {
@@ -1504,7 +1571,11 @@ static void mtk_tx_set_dma_desc_v1(struct net_device *dev, void *txd,
 		data |= TX_DMA_LS0;
 	WRITE_ONCE(desc->txd3, data);
 
-	data = (mac->id + 1) << TX_DMA_FPORT_SHIFT; /* forward port */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		data = 0; /* Let the switch perform normal destination lookup. */
+	} else {
+		data = (mac->id + 1) << TX_DMA_FPORT_SHIFT;
+	}
 	if (info->first) {
 		if (info->gso)
 			data |= TX_DMA_TSO;
@@ -1625,6 +1696,8 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 		return -ENOMEM;
 
 	mtk_tx_set_dma_desc(dev, itxd, &txd_info);
+	if (MTK_HAS_CAPS(soc->caps, MTK_SOC_MT7620))
+		WRITE_ONCE(itxd_pdma->txd4, READ_ONCE(itxd->txd4));
 
 	itx_buf->flags |= MTK_TX_FLAGS_SINGLE0;
 	itx_buf->mac_id = mac->id;
@@ -1669,6 +1742,9 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 				goto err_dma;
 
 			mtk_tx_set_dma_desc(dev, txd, &txd_info);
+			if (MTK_HAS_CAPS(soc->caps, MTK_SOC_MT7620) && new_desc)
+				WRITE_ONCE(txd_pdma->txd4,
+					   READ_ONCE(txd->txd4));
 
 			tx_buf = mtk_desc_to_tx_buf(ring, txd,
 						    soc->tx.desc_size);
@@ -2261,6 +2337,8 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			default:
 				break;
 			}
+		} else if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+			mac = 0;
 		} else if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
 			   !(trxd.rxd4 & RX_DMA_SPECIAL_TAG)) {
 			mac = RX_DMA_GET_SPORT(trxd.rxd4) - 1;
@@ -2363,7 +2441,12 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 		skb->dev = netdev;
 		bytes += skb->len;
 
-		if (mtk_is_netsys_v3_or_greater(eth)) {
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+			/* PPE is not enabled and RXD4 has no usable flow hash. */
+			reason = 0;
+			hash = 0;
+			rxdcsum = &trxd.rxd4;
+		} else if (mtk_is_netsys_v3_or_greater(eth)) {
 			reason = FIELD_GET(MTK_RXD5_PPE_CPU_REASON, trxd.rxd5);
 			hash = trxd.rxd5 & MTK_RXD5_FOE_ENTRY;
 			if (hash != MTK_RXD5_FOE_ENTRY)
@@ -2379,16 +2462,20 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			rxdcsum = &trxd.rxd4;
 		}
 
-		if (*rxdcsum & eth->soc->rx.dma_l4_valid)
+		if ((netdev->features & NETIF_F_RXCSUM) &&
+		    (*rxdcsum & eth->soc->rx.dma_l4_valid))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb_checksum_none_assert(skb);
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+			dev_sw_netstats_rx_add(netdev, skb->len);
 		skb->protocol = eth_type_trans(skb, netdev);
 
 		/* When using VLAN untagging in combination with DSA, the
 		 * hardware treats the MTK special tag as a VLAN and untags it.
 		 */
-		if (mtk_is_netsys_v1(eth) && (trxd.rxd2 & RX_DMA_VTAG) &&
+		if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+		    mtk_is_netsys_v1(eth) && (trxd.rxd2 & RX_DMA_VTAG) &&
 		    netdev_uses_dsa(netdev)) {
 			unsigned int port = RX_DMA_VPID(trxd.rxd3) & GENMASK(2, 0);
 
@@ -2467,6 +2554,9 @@ mtk_poll_tx_done(struct mtk_eth *eth, struct mtk_poll_state *state, u8 mac,
 	dev = eth->netdev[mac];
 	if (!dev)
 		return;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		dev_sw_netstats_tx_add(dev, 1, bytes);
 
 	txq = netdev_get_tx_queue(dev, skb_get_queue_mapping(skb));
 	if (state->txq == txq) {
@@ -3376,7 +3466,9 @@ static void mtk_tx_timeout(struct net_device *dev, unsigned int txqueue)
 	if (test_bit(MTK_RESETTING, &eth->state))
 		return;
 
-	if (!mtk_hw_reset_check(eth))
+	/* MT7620 FE interrupt status does not contain the NETSYS error bits. */
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    !mtk_hw_reset_check(eth))
 		return;
 
 	eth->netdev[mac->id]->stats.tx_errors++;
@@ -3491,6 +3583,8 @@ static void mtk_poll_controller(struct net_device *dev)
 }
 #endif
 
+static void mtk_set_mcr_max_rx(struct mtk_mac *mac, u32 val);
+
 static int mtk_start_dma(struct mtk_eth *eth)
 {
 	u32 val, rx_2b_offset = (NET_IP_ALIGN == 2) ? MTK_RX_2B_OFFSET : 0;
@@ -3521,6 +3615,13 @@ static int mtk_start_dma(struct mtk_eth *eth)
 			MTK_RX_DMA_EN | rx_2b_offset |
 			MTK_RX_BT_32DWORDS | MTK_MULTI_EN,
 			reg_map->pdma.glo_cfg);
+	} else if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		mtk_set_mcr_max_rx(eth->mac[0],
+				   eth->netdev[0]->mtu + MTK_RX_ETH_HLEN);
+		mtk_m32(eth, 0, MT7620_CDMA_CSUM_EN, MT7620_CDMA_CSG_CFG);
+		mtk_w32(eth, MTK_TX_WB_DDONE | MTK_TX_DMA_EN |
+			MTK_RX_DMA_EN | rx_2b_offset | MT7620_PDMA_BT_16DWORDS,
+			reg_map->pdma.glo_cfg);
 	} else {
 		mtk_w32(eth, MTK_TX_WB_DDONE | MTK_TX_DMA_EN | MTK_RX_DMA_EN |
 			MTK_MULTI_EN | MTK_PDMA_SIZE_8DWORDS,
@@ -3536,6 +3637,15 @@ static void mtk_gdm_config(struct mtk_eth *eth, u32 id, u32 config)
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
 		return;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		/* All traffic classes go to PDMA; the switch supplies RXD4. */
+		val = MT7620_GDMA_CSUM_EN | BIT(16);
+		if (config == MTK_GDMA_DROP_ALL)
+			val |= 0x7777;
+		mtk_m32(eth, 0xffff, val, MT7620_GDMA1_FWD_CFG);
+		return;
+	}
 
 	val = mtk_r32(eth, MTK_GDMA_FWD_CFG(id));
 
@@ -3685,7 +3795,8 @@ static int mtk_open(struct net_device *dev)
 	phylink_start(mac->phylink);
 	netif_tx_start_all_queues(dev);
 
-	if (mtk_is_netsys_v2_or_greater(eth))
+	if (mtk_is_netsys_v2_or_greater(eth) ||
+	    MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
 		return 0;
 
 	if (mtk_uses_dsa(dev) && !eth->prog) {
@@ -3739,6 +3850,13 @@ static void mtk_stop_dma(struct mtk_eth *eth, u32 glo_cfg)
 		}
 		break;
 	}
+	if (i == 10 && MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		reset_control_assert(eth->rst_fe);
+		usleep_range(60, 120);
+		reset_control_deassert(eth->rst_fe);
+		usleep_range(1000, 1200);
+	}
+
 }
 
 static int mtk_stop(struct net_device *dev)
@@ -3787,6 +3905,11 @@ static int mtk_xdp_setup(struct net_device *dev, struct bpf_prog *prog,
 	struct mtk_eth *eth = mac->hw;
 	struct bpf_prog *old_prog;
 	bool need_update;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		NL_SET_ERR_MSG_MOD(extack, "MT7620 PDMA does not support XDP");
+		return -EOPNOTSUPP;
+	}
 
 	if (eth->hwlro) {
 		NL_SET_ERR_MSG_MOD(extack, "XDP not supported with HWLRO");
@@ -3941,6 +4064,16 @@ static void mtk_set_mcr_max_rx(struct mtk_mac *mac, u32 val)
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
 		return;
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		u32 jumbo = 0;
+
+		if (val > ETH_FRAME_LEN + ETH_FCS_LEN)
+			jumbo = BIT(19) | FIELD_PREP(GENMASK(31, 28), 2);
+		mtk_m32(eth, BIT(19) | GENMASK(31, 28), jumbo,
+			MT7620_GDMA1_FWD_CFG);
+		return;
+	}
+
 	mcr_cur = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
 	mcr_new = mcr_cur & ~MAC_MCR_MAX_RX_MASK;
 
@@ -4058,7 +4191,8 @@ static bool mtk_hw_check_dma_hang(struct mtk_eth *eth)
 	bool qfsm_hang, qfwd_hang;
 	bool ret = false;
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) ||
+	    MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
 		return false;
 
 	/* WDMA sanity checks */
@@ -4166,6 +4300,27 @@ static int mtk_hw_init(struct mtk_eth *eth, bool reset)
 	if (eth->ethsys)
 		regmap_update_bits(eth->ethsys, ETHSYS_DMA_AG_MAP, dma_mask,
 				   of_dma_is_coherent(eth->dma_dev->of_node) * dma_mask);
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		ret = reset_control_assert(eth->rst_fe);
+		if (ret)
+			goto err_disable_pm;
+		usleep_range(60, 120);
+		ret = reset_control_deassert(eth->rst_fe);
+		if (ret)
+			goto err_disable_pm;
+		usleep_range(1000, 1200);
+
+		mtk_m32(eth, 0, MT7620_CDMA_CSUM_EN, MT7620_CDMA_CSG_CFG);
+		mtk_dim_rx(&eth->rx_dim.work);
+		mtk_dim_tx(&eth->tx_dim.work);
+		mtk_tx_irq_disable(eth, ~0);
+		mtk_rx_irq_disable(eth, ~0);
+		if (eth->mac[0])
+			mtk_set_mcr_max_rx(eth->mac[0],
+					   eth->netdev[0]->mtu + MTK_RX_ETH_HLEN);
+		return 0;
+	}
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
 		ret = device_reset(eth->dev);
@@ -4405,6 +4560,9 @@ static void mtk_prepare_for_reset(struct mtk_eth *eth)
 	u32 val;
 	int i;
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return;
+
 	/* set FE PPE ports link down */
 	for (i = MTK_GMAC1_ID;
 	     i <= (mtk_is_netsys_v3_or_greater(eth) ? MTK_GMAC3_ID : MTK_GMAC2_ID);
@@ -4476,6 +4634,9 @@ static void mtk_pending_work(struct work_struct *work)
 		}
 	}
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		goto out_reset;
+
 	/* set FE PPE ports link up */
 	for (i = MTK_GMAC1_ID;
 	     i <= (mtk_is_netsys_v3_or_greater(eth) ? MTK_GMAC3_ID : MTK_GMAC2_ID);
@@ -4489,6 +4650,7 @@ static void mtk_pending_work(struct work_struct *work)
 		mtk_w32(eth, val, MTK_FE_GLO_CFG(i));
 	}
 
+out_reset:
 	clear_bit(MTK_RESETTING, &eth->state);
 
 	mtk_wed_fe_reset_complete();
@@ -4604,12 +4766,14 @@ static int mtk_nway_reset(struct net_device *dev)
 
 static void mtk_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
+	struct mtk_mac *mac = netdev_priv(dev);
 	int i;
+
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620))
+		return;
 
 	switch (stringset) {
 	case ETH_SS_STATS: {
-		struct mtk_mac *mac = netdev_priv(dev);
-
 		for (i = 0; i < ARRAY_SIZE(mtk_ethtool_stats); i++)
 			ethtool_puts(&data, mtk_ethtool_stats[i].str);
 		if (mtk_page_pool_enabled(mac->hw))
@@ -4623,10 +4787,14 @@ static void mtk_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 
 static int mtk_get_sset_count(struct net_device *dev, int sset)
 {
+	struct mtk_mac *mac = netdev_priv(dev);
+
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620))
+		return sset == ETH_SS_STATS ? 0 : -EOPNOTSUPP;
+
 	switch (sset) {
 	case ETH_SS_STATS: {
 		int count = ARRAY_SIZE(mtk_ethtool_stats);
-		struct mtk_mac *mac = netdev_priv(dev);
 
 		if (mtk_page_pool_enabled(mac->hw))
 			count += page_pool_ethtool_stats_get_count();
@@ -4661,6 +4829,10 @@ static void mtk_get_ethtool_stats(struct net_device *dev,
 	u64 *data_src, *data_dst;
 	unsigned int start;
 	int i;
+
+	/* MT7620 has no NETSYS MIB block; rtnetlink uses software counters. */
+	if (MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620))
+		return;
 
 	if (unlikely(test_bit(MTK_RESETTING, &mac->hw->state)))
 		return;
@@ -4834,6 +5006,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 {
 	const struct phylink_mac_ops *mac_ops = &mtk_phylink_ops;
 	const __be32 *_id = of_get_property(np, "reg", NULL);
+	netdev_features_t features = eth->soc->hw_features;
 	phy_interface_t phy_mode;
 	struct phylink *phylink;
 	struct mtk_mac *mac;
@@ -4847,7 +5020,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	}
 
 	id = be32_to_cpup(_id);
-	if (id >= MTK_MAX_DEVS) {
+	if (id >= MTK_MAX_DEVS ||
+	    (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) && id)) {
 		dev_err(eth->dev, "%d is not a valid mac id\n", id);
 		return -EINVAL;
 	}
@@ -4975,6 +5149,15 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
 			  mac->phylink_config.supported_interfaces);
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		phy_interface_zero(mac->phylink_config.supported_interfaces);
+		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
+			  mac->phylink_config.supported_interfaces);
+		mac->phylink_config.mac_capabilities = MAC_1000FD |
+			MAC_SYM_PAUSE | MAC_ASYM_PAUSE;
+		mac->phylink_config.lpi_capabilities = 0;
+	}
+
 	phylink = phylink_create(&mac->phylink_config,
 				 of_fwnode_handle(mac->of_node),
 				 phy_mode, mac_ops);
@@ -4986,17 +5169,24 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	mac->phylink = phylink;
 
 	SET_NETDEV_DEV(eth->netdev[id], eth->dev);
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		eth->netdev[id]->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 	eth->netdev[id]->watchdog_timeo = 5 * HZ;
 	eth->netdev[id]->netdev_ops = &mtk_netdev_ops;
 	eth->netdev[id]->base_addr = (unsigned long)eth->base;
 
-	eth->netdev[id]->hw_features = eth->soc->hw_features;
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    (eth->chip_rev & GENMASK(3, 0)) >= 5)
+		features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO6 |
+			    NETIF_F_IPV6_CSUM;
+
+	eth->netdev[id]->hw_features = features;
 	if (eth->hwlro)
 		eth->netdev[id]->hw_features |= NETIF_F_LRO;
 
-	eth->netdev[id]->vlan_features = eth->soc->hw_features &
+	eth->netdev[id]->vlan_features = features &
 		~NETIF_F_HW_VLAN_CTAG_TX;
-	eth->netdev[id]->features |= eth->soc->hw_features;
+	eth->netdev[id]->features |= features;
 	eth->netdev[id]->ethtool_ops = &mtk_ethtool_ops;
 
 	eth->netdev[id]->irq = eth->irq[MTK_FE_IRQ_SHARED];
@@ -5127,8 +5317,26 @@ static int mtk_probe(struct platform_device *pdev)
 	if (IS_ERR(eth->base))
 		return PTR_ERR(eth->base);
 
+	/* MT7620 uses PDMA's RX_2B_OFFSET with an aligned DMA address. */
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628))
 		eth->ip_align = NET_IP_ALIGN;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		struct regmap *sysc;
+
+		sysc = syscon_regmap_lookup_by_phandle(eth->dev->of_node,
+						       "mediatek,sysc");
+		if (IS_ERR(sysc))
+			return PTR_ERR(sysc);
+		err = regmap_read(sysc, 0x0c, &eth->chip_rev);
+		if (err)
+			return err;
+
+		eth->rst_fe = devm_reset_control_get_exclusive(eth->dev, "fe");
+		if (IS_ERR(eth->rst_fe))
+			return dev_err_probe(eth->dev, PTR_ERR(eth->rst_fe),
+					     "failed to get FE reset\n");
+	}
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_36BIT_DMA)) {
 		err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(36));
@@ -5153,7 +5361,8 @@ static int mtk_probe(struct platform_device *pdev)
 	eth->tx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
 	INIT_WORK(&eth->tx_dim.work, mtk_dim_tx);
 
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
+	    !MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
 		eth->ethsys = syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
 							      "mediatek,ethsys");
 		if (IS_ERR(eth->ethsys)) {
@@ -5308,8 +5517,9 @@ static int mtk_probe(struct platform_device *pdev)
 	if (err)
 		goto err_free_dev;
 
-	/* No MT7628/88 support yet */
-	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
+	/* MT7620 MDIO belongs to the integrated switch. */
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628) &&
+	    !MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
 		err = mtk_mdio_init(eth);
 		if (err)
 			goto err_free_dev;
@@ -5348,6 +5558,13 @@ static int mtk_probe(struct platform_device *pdev)
 	netif_napi_add(eth->dummy_dev, &eth->tx_napi, mtk_napi_tx);
 	netif_napi_add(eth->dummy_dev, &eth->rx_napi, mtk_napi_rx);
 
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		if (!eth->netdev[0]) {
+			err = -EINVAL;
+			goto err_unreg_netdev;
+		}
+	}
+
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
 		if (!eth->netdev[i])
 			continue;
@@ -5362,10 +5579,10 @@ static int mtk_probe(struct platform_device *pdev)
 				   eth->netdev[i]->base_addr, eth->irq[MTK_FE_IRQ_SHARED]);
 	}
 
-
 	platform_set_drvdata(pdev, eth);
-	schedule_delayed_work(&eth->reset.monitor_work,
-			      MTK_DMA_MONITOR_TIMEOUT);
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		schedule_delayed_work(&eth->reset.monitor_work,
+				      MTK_DMA_MONITOR_TIMEOUT);
 
 	return 0;
 
@@ -5665,7 +5882,30 @@ static const struct mtk_soc_data rt5350_data = {
 	},
 };
 
+static const struct mtk_soc_data mt7620_data = {
+	.reg_map = &mt7620_reg_map,
+	.caps = MT7620_CAPS,
+	.required_clks = BIT_ULL(MTK_CLK_FE),
+	.hw_features = NETIF_F_IP_CSUM | NETIF_F_RXCSUM,
+	.version = 1,
+	.tx = {
+		.desc_size = sizeof(struct mtk_tx_dma),
+		.dma_max_len = MTK_TX_DMA_BUF_LEN,
+		.dma_len_offset = 16,
+		.dma_size = MTK_DMA_SIZE(256),
+	},
+	.rx = {
+		.desc_size = sizeof(struct mtk_rx_dma),
+		.irq_done_mask = MTK_RX_DONE_INT,
+		.dma_l4_valid = MT7620_RX_DMA_L4_VALID,
+		.dma_max_len = MTK_TX_DMA_BUF_LEN,
+		.dma_len_offset = 16,
+		.dma_size = MTK_DMA_SIZE(256),
+	},
+};
+
 const struct of_device_id of_mtk_match[] = {
+	{ .compatible = "mediatek,mt7620-eth", .data = &mt7620_data },
 	{ .compatible = "mediatek,mt2701-eth", .data = &mt2701_data },
 	{ .compatible = "mediatek,mt7621-eth", .data = &mt7621_data },
 	{ .compatible = "mediatek,mt7622-eth", .data = &mt7622_data },

@@ -22,6 +22,8 @@
 #include <linux/bpf_trace.h>
 #include "mtk_ppe.h"
 
+struct reset_control;
+
 #define MTK_MAX_DSA_PORTS	7
 #define MTK_DSA_PORT_MASK	GENMASK(2, 0)
 
@@ -988,6 +990,7 @@ enum mkt_eth_capabilities {
 	MTK_SHARED_INT_BIT,
 	MTK_TRGMII_MT7621_CLK_BIT,
 	MTK_QDMA_BIT,
+	MTK_SOC_MT7620_BIT,
 	MTK_SOC_MT7628_BIT,
 	MTK_RSTCTRL_PPE1_BIT,
 	MTK_RSTCTRL_PPE2_BIT,
@@ -1028,6 +1031,7 @@ enum mkt_eth_capabilities {
 #define MTK_SHARED_INT		BIT_ULL(MTK_SHARED_INT_BIT)
 #define MTK_TRGMII_MT7621_CLK	BIT_ULL(MTK_TRGMII_MT7621_CLK_BIT)
 #define MTK_QDMA		BIT_ULL(MTK_QDMA_BIT)
+#define MTK_SOC_MT7620		BIT_ULL(MTK_SOC_MT7620_BIT)
 #define MTK_SOC_MT7628		BIT_ULL(MTK_SOC_MT7628_BIT)
 #define MTK_RSTCTRL_PPE1	BIT_ULL(MTK_RSTCTRL_PPE1_BIT)
 #define MTK_RSTCTRL_PPE2	BIT_ULL(MTK_RSTCTRL_PPE2_BIT)
@@ -1105,6 +1109,8 @@ enum mkt_eth_capabilities {
 
 #define MT7623_CAPS  (MTK_GMAC1_RGMII | MTK_GMAC1_TRGMII | MTK_GMAC2_RGMII | \
 		      MTK_QDMA)
+
+#define MT7620_CAPS  (MTK_SHARED_INT | MTK_SOC_MT7620)
 
 #define MT7628_CAPS  (MTK_SHARED_INT | MTK_SOC_MT7628)
 
@@ -1290,6 +1296,7 @@ struct mtk_soc_data {
  */
 
 struct mtk_eth {
+	u32				chip_rev;
 	struct device			*dev;
 	struct device			*dma_dev;
 	void __iomem			*base;
@@ -1318,6 +1325,7 @@ struct mtk_eth {
 	dma_addr_t			phy_scratch_ring;
 	void				*scratch_head[MTK_FQ_DMA_HEAD];
 	struct clk			*clks[MTK_CLK_MAX];
+	struct reset_control		*rst_fe;
 
 	struct mii_bus			*mii_bus;
 	unsigned int			mdc_divider;

@@ -110,9 +110,9 @@
 		status = "disabled";
 
 		mdio {
-			mediatek,sysc = <&sysc>;
 			#address-cells = <1>;
 			#size-cells = <0>;
+			mediatek,sysc = <&sysc>;
 
 			ephy0: ethernet-phy@0 {
 				reg = <0>;

@@ -373,6 +373,8 @@ config MT7620_EPHY
 	help
 	  Support for the five integrated Fast Ethernet PHYs in MT7620.
 	  The driver configures shared analog registers and per-port tuning.
+	  The internal MDIO bus must reference the system controller so the
+	  driver can select the tuning for the SoC package.
 
 config NATIONAL_PHY
 	tristate "National Semiconductor PHYs"

@@ -3,10 +3,10 @@
 MT7620A/N net-next integration
 =============================
 
-Revision note: ``mt7620-integration-v2`` contains offline corrections and has
-not been hardware tested. The RAM results below refer to the retained
-``mt7620-integration`` at ``4104956dceab``. See the offline revision section
-and ``tools/testing/mt7620-review/REVIEW.md`` for the new validation status.
+Revision note: the FE-counter revision has additional RAM results in the
+2026-09-05 section below. The original RAM results refer to the retained
+``mt7620-integration`` at ``4104956dceab``. Keep these records distinct from
+the intermediate offline-only ``mt7620-integration-v2`` revision.
 
 This is an integration and hardware-validation tree, based on net-next
 ``6797f12ea40e788c7da47a7cf9ea4a9341548de0``. It follows Daniel Golle's
@@ -42,9 +42,11 @@ RXD4 supplies the ingress port. There is no in-band tag and no tag overhead.
 An ordinary conduit packet has a zero TX bitmap, requesting normal
 switch destination lookup; bit 24 would force physical port 4.
 
-IPv4 TX checksum and RX checksum offload are enabled. SG, TSO, TSO6 and IPv6
-TX checksum are enabled only for ECO >= 5, following the source Ethernet
-work. The frame engine and switch accept frames up to 2048 bytes including
+RX checksum offload is enabled. IPv4 TX checksum, SG, TSO, TSO6 and IPv6
+TX checksum are enabled only for ECO >= 5, following the historical
+driver workaround for early-ECO checksum/segmentation failures. This is
+not an independently reproduced silicon erratum. The frame engine and
+switch accept frames up to 2048 bytes including
 Ethernet header and FCS, giving an untagged MTU ceiling of 2030. VLAN headers
 consume part of that frame budget. XDP and hardware VLAN insertion are
 outside this initial subset; VLAN frames are handled in software by the FE.
@@ -55,11 +57,16 @@ VIDs can be resident at once, including a bridge's default VID 1. Exhaustion
 returns ENOSPC. VLAN IDs can span the normal 12-bit range. Shared MT7530
 FDB, STP, bridge membership, flooding and mirroring operations are reused.
 
-MT7620 MIBs have a different layout, including packed 16-bit counters.
+MT7620 switch MIBs have a different layout, including packed 16-bit counters.
 A 20 ms worker extends counters in software. Sustained scheduling delays
 longer than a counter wrap interval can lose wraps; saturation and CPU-port
 counter consistency are therefore part of the hardware test plan.
-Conduit statistics use software counters, not the later NETSYS MIB layout.
+Conduit rtnetlink statistics use software counters. Its ethtool statistics
+also expose twelve CPU GDM1 counters, using the MT7620 register layout.
+These clear-on-read 32-bit registers are accumulated into protected 64-bit
+totals and polled once per second while the conduit is open. The worker is
+cancelled before DMA shutdown; cached totals remain available while down.
+PPE GDM2 counters are not included.
 
 Implementation stages
 ---------------------
@@ -238,8 +245,8 @@ traffic and NET_RX progress. The MIPS CPU IRQ chip uses handle_percpu_irq
 without the per-CPU descriptor flag for the device IRQ; the current genirq
 reporting path emits zeros when tot_count is zero. This base IRQ-accounting
 issue remains a platform follow-up and is not used as a traffic measurement.
-The FE does not expose the unavailable NETSYS ethtool counter set. Use
-rtnetlink software counters and switch MIBs instead.
+The original revision did not expose FE ethtool counters. The FE-counter
+revision below adds the separate CPU GDM1 layout, not the NETSYS layout.
 
 LAN2--LAN4 physical traffic, older ECOs, MT7620N hardware, sustained
 minimum-frame load, exhaustive multicast/mirror/STP tests and fault injection
@@ -304,9 +311,10 @@ Offline review revision (2026-09-05)
 
 The hardware results above belong to ``mt7620-integration`` at
 ``4104956dceab`` (code ``3100a3103fb0``). The separate
-``mt7620-integration-v2`` candidate includes offline review corrections at
-``e22091a10e90`` and has not been RAM-booted. The bench is reserved for a
-separate task. Do not transfer the earlier hardware results to v2.
+``mt7620-integration-v2`` candidate with offline review corrections at
+``e22091a10e90`` was initially reviewed without a bench. Do not transfer
+the earlier hardware results to that exact intermediate revision. Its
+corrections are included in the later FE-counter RAM tests below.
 
 The revised standalone ``mt7620-ethernet-review-v2`` branch is six patches
 on net-next ``761ae184f850``. It fixes partial-probe cleanup and general
@@ -320,3 +328,70 @@ Review evidence and reproducible host-side models are in
 they do not validate actual DMA recovery or interrupt concurrency. The
 original branches remain published for reproducibility. The six-patch
 RFC draft is unsent and still requires human review and DCO certification.
+
+FE-counter RAM revision (2026-09-05)
+------------------------------------
+
+Code revision ``142693f0ec22`` adds CPU GDM1 ethtool statistics and includes
+the earlier lifecycle corrections. IPv4 TX checksum now shares the ECO5
+gate with the other TX offloads; ECO6 features remain enabled. The image
+was built from this source before committing it, with a diagnostic
+initramfs. Its SHA-256 is
+``2bde2250a3bcdbf479f48b8aa642af53c7fb4a56ebde937b83cf5aa11da6057a``.
+The final local manifest records the image hash and source-file hashes.
+
+The following tests ran on the same WE826-T2 MT7620A ECO6 with two 100BASE-T
+full-duplex links. They do not establish support for early ECOs or MT7620N.
+
+* Consecutive MMIO reads on the probe image confirmed clear-on-read GDM1
+  counters. Ethtool on the counter image reports twelve FE counters in
+  addition to the DSA conduit port statistics.
+* UDP: fourteen cases, three datagrams each, repeated with RX checksum
+  enabled and disabled. IPv4 options, IPv6 hop-by-hop headers and both IP
+  versions' fragmentation were included. Each matrix delivered all 21
+  valid datagrams and none of the 21 invalid ones. IPv4 zero UDP checksum
+  was accepted; IPv6 zero UDP checksum was rejected. Each matrix added
+  exactly nine hardware checksum errors; other invalid packets were
+  rejected by software. Disabling RX checksum trust does not disable
+  the GDMA checksum checker. Packet socket checksum metadata can also
+  reflect software processing; it is not a raw RXD4 capture.
+* TCP: twelve good SYNs produced twelve RST replies with verified correct
+  wire checksums; twelve SYNs with bad checksums produced no RST. The
+  cases covered both IP versions and IPv4 options/IPv6 hop-by-hop headers.
+  The hardware checksum-error counter increased by nine.
+* Eight separate IPv4/IPv6 TCP RX/TX runs on LAN1 and WAN, eight seconds
+  each at 80 Mbit/s, received 79.87--80.01 Mbit/s with no retransmissions.
+  A WAN bidirectional run received 79.86/79.73 Mbit/s, also without
+  retransmissions. These are paced application rates, not maximum rates.
+* TSO enabled: 1105/1109 software TX skbs corresponded to 31322/31664
+  GDM1 packets for IPv4/IPv6. TSO disabled: software and hardware counts
+  matched at 31321/31666. The four six-second runs received about
+  59.93--59.94 Mbit/s at a requested 60 Mbit/s.
+* MTU 1500: only IP length 1500 was delivered; lengths 1501, 2026 and
+  2030 caused nine GDM1 length errors. MTU 2030: all four lengths passed
+  without new GDM1 length errors. Length 2031 was not delivered in either
+  mode; the GDM1 count does not attribute that earlier drop to the FE.
+* Three close/open cycles preserved monotonically increasing FE totals;
+  repeated reads while down remained unchanged. Unbinding the switch
+  then FE, and binding FE then switch, recreated the interfaces and
+  restored LAN1/WAN ping without kernel warnings. Reprobe creates a new
+  netdevice/statistics lifetime.
+
+Full MIPS RAM-kernel and MIPS/x86_64 MediaTek driver builds passed with
+warnings treated as errors. The existing 18 host-side lifecycle checks
+also passed. Forced watchdog recovery, sustained counter-wrap stress,
+bad Ethernet FCS injection and exhaustive VLAN/PPPoE offload combinations
+were not tested in this revision. No MT7620 PPE support was added.
+
+The published candidate is ``mt7620-integration-v3``. The corresponding
+``mt7620-ethernet-review-v3`` is seven patches on ``761ae184f850``: four
+shared fixes, the binding, frame-engine support, and CPU GDM1 statistics.
+It excludes MT7620 PPE, DSA and platform/board support. The RFC draft is
+unsent and requires human review and DCO certification.
+
+After the tests, the board returned to its installed Linux 6.12.94 image.
+Both LAN1 and WAN answered all three final ping probes.
+Network/wireless configuration and the installed wpad binary have identical
+before/after hashes. Temporary endpoint addresses and the TFTP service were
+removed. The production buildtree's six reference files still match their
+recorded hashes; it was not used as a build output directory.

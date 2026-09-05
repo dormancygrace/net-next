@@ -1,0 +1,19 @@
+FAIL watchdog caps=1 resetting=0 status=0
+FAIL watchdog caps=1 resetting=0 status=1
+PASS watchdog caps=1 resetting=1 status=0
+PASS watchdog caps=1 resetting=1 status=1
+PASS watchdog caps=2 resetting=0 status=0
+PASS watchdog caps=2 resetting=0 status=1
+PASS watchdog caps=2 resetting=1 status=0
+PASS watchdog caps=2 resetting=1 status=1
+FAIL probe unwind stage=0 (MAC/IRQ/PPE/register)
+FAIL probe unwind stage=1 (MAC/IRQ/PPE/register)
+FAIL probe unwind stage=2 (MAC/IRQ/PPE/register)
+FAIL probe unwind stage=3 (MAC/IRQ/PPE/register)
+FAIL remove legacy up=0
+FAIL remove legacy up=1
+FAIL remove qdma up=0
+FAIL remove qdma up=1
+PASS remove mt7620 up=0
+PASS remove mt7620 up=1
+18 checks, 10 failures

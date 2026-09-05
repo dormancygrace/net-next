@@ -3,6 +3,11 @@
 MT7620A/N net-next integration
 =============================
 
+Revision note: ``mt7620-integration-v2`` contains offline corrections and has
+not been hardware tested. The RAM results below refer to the retained
+``mt7620-integration`` at ``4104956dceab``. See the offline revision section
+and ``tools/testing/mt7620-review/REVIEW.md`` for the new validation status.
+
 This is an integration and hardware-validation tree, based on net-next
 ``6797f12ea40e788c7da47a7cf9ea4a9341548de0``. It follows Daniel Golle's
 recommendation in `OpenWrt PR 24515`_ to integrate the frame engine first,
@@ -293,3 +298,25 @@ branches and an RFC cover letter does not send a mailing-list submission.
 .. _OpenWrt PR 24493: https://github.com/openwrt/openwrt/pull/24493
 .. _OpenWrt PR 24557: https://github.com/openwrt/openwrt/pull/24557
 .. _MT7620 Programming Guide: https://w.electrodragon.com/w/images/5/51/MT7620_ProgrammingGuide_20121101.pdf
+
+Offline review revision (2026-09-05)
+-----------------------------------
+
+The hardware results above belong to ``mt7620-integration`` at
+``4104956dceab`` (code ``3100a3103fb0``). The separate
+``mt7620-integration-v2`` candidate includes offline review corrections at
+``e22091a10e90`` and has not been RAM-booted. The bench is reserved for a
+separate task. Do not transfer the earlier hardware results to v2.
+
+The revised standalone ``mt7620-ethernet-review-v2`` branch is six patches
+on net-next ``761ae184f850``. It fixes partial-probe cleanup and general
+netdevice/NAPI removal ordering, removes the NETSYS-only status gate from
+the MT7620 TX watchdog, and preserves other SoCs' DT resource constraints.
+Shared PDMA buffer ownership changes are now a separate prerequisite.
+MT7620 PPE remains outside the series.
+
+Review evidence and reproducible host-side models are in
+``tools/testing/mt7620-review/``. They complement compile and DT checks;
+they do not validate actual DMA recovery or interrupt concurrency. The
+original branches remain published for reproducibility. The six-patch
+RFC draft is unsent and still requires human review and DCO certification.

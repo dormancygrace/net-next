@@ -1,0 +1,32 @@
+[
+  {
+    "patch": 1,
+    "commit": "d73726169415bb6224d5ab53e5868153ff2f4af8",
+    "exit": 0
+  },
+  {
+    "patch": 2,
+    "commit": "ab4db08bcb1a8ad5fa13de983fe9e72e44e319b2",
+    "exit": 0
+  },
+  {
+    "patch": 3,
+    "commit": "ebbe14ec70b9e23c4ac020c4fc5e778999632755",
+    "exit": 0
+  },
+  {
+    "patch": 4,
+    "commit": "1b608bbf99e92877017c9c9268501a5c17f9c173",
+    "exit": 0
+  },
+  {
+    "patch": 5,
+    "commit": "7ab3c7daa25f94c255277f0b0b69a2e96f5f4dc1",
+    "exit": 0
+  },
+  {
+    "patch": 6,
+    "commit": "bf0efb3b43206e56efb6272a196cf92ca891091b",
+    "exit": 0
+  }
+]

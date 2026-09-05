@@ -1,0 +1,12 @@
+base: PASS mt7620 single resource: accepted=False, expected=False
+base: PASS mt7621 full resources: accepted=True, expected=True
+base: PASS mt7621 incomplete resets: accepted=False, expected=False
+base: PASS rt5350 one clock: accepted=False, expected=False
+v1: PASS mt7620 single resource: accepted=True, expected=True
+v1: PASS mt7621 full resources: accepted=True, expected=True
+v1: FAIL mt7621 incomplete resets: accepted=True, expected=False
+v1: FAIL rt5350 one clock: accepted=True, expected=False
+v2: PASS mt7620 single resource: accepted=True, expected=True
+v2: PASS mt7621 full resources: accepted=True, expected=True
+v2: PASS mt7621 incomplete resets: accepted=False, expected=False
+v2: PASS rt5350 one clock: accepted=False, expected=False

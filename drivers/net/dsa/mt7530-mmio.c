@@ -63,12 +63,6 @@ mt7988_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->regmap))
 		return PTR_ERR(priv->regmap);
 
-	if (priv->id == ID_MT7620) {
-		ret = mt7620_switch_init(priv);
-		if (ret)
-			return ret;
-	}
-
 	return dsa_register_switch(priv->ds);
 }
 

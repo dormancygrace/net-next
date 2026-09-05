@@ -3565,11 +3565,26 @@ static const struct phylink_pcs_ops mt7530_pcs_ops = {
 static int mt7620_setup(struct dsa_switch *ds)
 {
 	struct mt7530_priv *priv = ds->priv;
-	struct mt7620_switch *sw = priv->mt7620;
+	struct mt7620_switch *sw;
 	int ret, port;
 
 	if (!dsa_is_cpu_port(ds, 6) || dsa_is_user_port(ds, 5))
 		return -EINVAL;
+
+	sw = devm_kzalloc(priv->dev, sizeof(*sw), GFP_KERNEL);
+	if (!sw)
+		return -ENOMEM;
+	sw->sysc = syscon_regmap_lookup_by_phandle(priv->dev->of_node,
+						   "mediatek,sysc");
+	if (IS_ERR(sw->sysc))
+		return PTR_ERR(sw->sysc);
+	sw->rst_ephy = devm_reset_control_get_exclusive(priv->dev, "ephy");
+	if (IS_ERR(sw->rst_ephy))
+		return PTR_ERR(sw->rst_ephy);
+	sw->irq = of_irq_get(priv->dev->of_node, 0);
+	if (sw->irq <= 0)
+		return sw->irq ?: -EINVAL;
+	priv->mt7620 = sw;
 
 	ret = reset_control_assert(priv->rstc);
 	if (ret)
@@ -4079,25 +4094,3 @@ EXPORT_SYMBOL_GPL(mt7530_remove_common);
 MODULE_AUTHOR("Sean Wang <sean.wang@mediatek.com>");
 MODULE_DESCRIPTION("Driver for Mediatek MT7530 Switch");
 MODULE_LICENSE("GPL");
-
-int mt7620_switch_init(struct mt7530_priv *priv)
-{
-	struct mt7620_switch *sw;
-
-	sw = devm_kzalloc(priv->dev, sizeof(*sw), GFP_KERNEL);
-	if (!sw)
-		return -ENOMEM;
-	sw->sysc = syscon_regmap_lookup_by_phandle(priv->dev->of_node,
-						   "mediatek,sysc");
-	if (IS_ERR(sw->sysc))
-		return PTR_ERR(sw->sysc);
-	sw->rst_ephy = devm_reset_control_get_exclusive(priv->dev, "ephy");
-	if (IS_ERR(sw->rst_ephy))
-		return PTR_ERR(sw->rst_ephy);
-	sw->irq = of_irq_get(priv->dev->of_node, 0);
-	if (sw->irq <= 0)
-		return sw->irq ?: -EINVAL;
-	priv->mt7620 = sw;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(mt7620_switch_init);

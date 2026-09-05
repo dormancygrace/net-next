@@ -962,7 +962,6 @@ struct mt7530_hw_stats {
 	u8		sizeof_stat;
 };
 
-int mt7620_switch_init(struct mt7530_priv *priv);
 int mt7530_probe_common(struct mt7530_priv *priv);
 void mt7530_remove_common(struct mt7530_priv *priv);
 

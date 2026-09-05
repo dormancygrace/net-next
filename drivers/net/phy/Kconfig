@@ -365,6 +365,15 @@ config MOTORCOMM_PHY
 	  Enables support for Motorcomm network PHYs.
 	  Currently supports YT85xx Gigabit Ethernet PHYs.
 
+config MT7620_EPHY
+	tristate "MediaTek MT7620 Fast Ethernet PHYs"
+	depends on SOC_MT7620 || COMPILE_TEST
+	depends on MFD_SYSCON
+	select PHY_PACKAGE
+	help
+	  Support for the five integrated Fast Ethernet PHYs in MT7620.
+	  The driver configures shared analog registers and per-port tuning.
+
 config NATIONAL_PHY
 	tristate "National Semiconductor PHYs"
 	help

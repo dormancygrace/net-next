@@ -134,82 +134,6 @@ static void mt7620_mask_irq(void *data)
 	synchronize_irq(priv->irq);
 }
 
-/* Values from the Ralink MT7620 EPHY initialization sequence, also used by
- * OpenWrt gsw_mt7620.c (John Crispin, Felix Fietkau and Michael Lee).
- */
-static int mt7620_ephy_init(struct mt7530_priv *priv)
-{
-	static const struct {
-		u16 page;
-		u8 reg;
-		u16 bga;
-		u16 qfn;
-	} tuning[] = {
-		{ 0x4000, 17, 0x7444, 0x7444 },
-		{ 0x4000, 19, 0x0114, 0x0117 },
-		{ 0x4000, 22, 0x10cf, 0x10cf },
-		{ 0x4000, 25, 0x6212, 0x6212 },
-		{ 0x4000, 26, 0x0777, 0x0777 },
-		{ 0x4000, 29, 0x4000, 0x4000 },
-		{ 0x4000, 28, 0xc077, 0xc077 },
-		{ 0x4000, 24, 0x0000, 0x0000 },
-		{ 0x3000, 17, 0x4838, 0x4838 },
-		{ 0x2000, 21, 0x0515, 0x0517 },
-		{ 0x2000, 22, 0x0053, 0x0fd2 },
-		{ 0x2000, 23, 0x00bf, 0x00bf },
-		{ 0x2000, 24, 0x0aaf, 0x0aab },
-		{ 0x2000, 25, 0x0fad, 0x00ae },
-		{ 0x2000, 26, 0x0fc1, 0x0fff },
-		{ 0x1000, 17, 0xe7f8, 0xe7f8 },
-	};
-	static const u16 local[] = { 0x1111, 0x1010, 0x1515, 0x0f0f, 0x1313 };
-	u32 rev;
-	int i, ret;
-
-	ret = regmap_read(priv->sysc, 0x0c, &rev);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < ARRAY_SIZE(tuning); i++) {
-		ret = priv->info->phy_write_c22(priv, 1, 0x1f,
-						 tuning[i].page);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, 1, tuning[i].reg,
-						 rev & BIT(16) ? tuning[i].bga :
-						 tuning[i].qfn);
-		if (ret)
-			return ret;
-	}
-
-	for (i = 0; i < MT7530_NUM_PHYS; i++) {
-		ret = priv->info->phy_write_c22(priv, i, 0x1f, 0x8000);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, 30, 0xa000);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, MII_ADVERTISE, 0x05e1);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, 0x1f, 0xa000);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, 16, local[i]);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, 0x1f, 0x8000);
-		if (ret)
-			return ret;
-		ret = priv->info->phy_write_c22(priv, i, MII_BMCR,
-						 BMCR_ANENABLE | BMCR_ANRESTART |
-						 BMCR_SPEED100);
-		if (ret)
-			return ret;
-	}
-	return 0;
-}
-
 static void mt7620_mac_port_get_caps(struct dsa_switch *ds, int port,
 				     struct phylink_config *config)
 {
@@ -3584,10 +3508,6 @@ static int mt7620_setup(struct dsa_switch *ds)
 			  GENMASK(20, 16));
 
 	ret = reset_control_reset(priv->rst_ephy);
-	if (ret)
-		return ret;
-
-	ret = mt7620_ephy_init(priv);
 	if (ret)
 		return ret;
 

@@ -178,6 +178,14 @@ allOf:
         - mediatek,sysc
     else:
       properties:
+        clocks:
+          minItems: 2
+        clock-names:
+          minItems: 2
+        resets:
+          minItems: 3
+        reset-names:
+          minItems: 3
         mediatek,sysc: false
       required:
         - mediatek,ethsys

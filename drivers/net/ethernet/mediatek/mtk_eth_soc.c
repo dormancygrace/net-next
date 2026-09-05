@@ -3493,7 +3493,9 @@ static void mtk_tx_timeout(struct net_device *dev, unsigned int txqueue)
 	if (test_bit(MTK_RESETTING, &eth->state))
 		return;
 
-	if (!mtk_hw_reset_check(eth))
+	/* MT7620 FE interrupt status does not contain the NETSYS error bits. */
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    !mtk_hw_reset_check(eth))
 		return;
 
 	eth->netdev[mac->id]->stats.tx_errors++;
@@ -4713,6 +4715,8 @@ static int mtk_free_dev(struct mtk_eth *eth)
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
 		if (!eth->netdev[i])
 			continue;
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
+			unregister_netdevice_notifier(&eth->mac[i]->device_notifier);
 		if (eth->mac[i]->phylink)
 			phylink_destroy(eth->mac[i]->phylink);
 		free_netdev(eth->netdev[i]);
@@ -4734,12 +4738,8 @@ static int mtk_unreg_dev(struct mtk_eth *eth)
 	int i;
 
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
-		struct mtk_mac *mac;
 		if (!eth->netdev[i])
 			continue;
-		mac = netdev_priv(eth->netdev[i]);
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
-			unregister_netdevice_notifier(&mac->device_notifier);
 		if (eth->netdev[i]->reg_state == NETREG_REGISTERED)
 			unregister_netdev(eth->netdev[i]);
 	}
@@ -4753,17 +4753,6 @@ static void mtk_sgmii_destroy(struct mtk_eth *eth)
 
 	for (i = 0; i < MTK_MAX_DEVS; i++)
 		mtk_pcs_lynxi_destroy(eth->sgmii_pcs[i]);
-}
-
-static int mtk_cleanup(struct mtk_eth *eth)
-{
-	mtk_unreg_dev(eth);
-	cancel_delayed_work_sync(&eth->reset.monitor_work);
-	cancel_work_sync(&eth->pending_work);
-	mtk_free_dev(eth);
-	mtk_sgmii_destroy(eth);
-
-	return 0;
 }
 
 static int mtk_get_link_ksettings(struct net_device *ndev,
@@ -5559,7 +5548,7 @@ static int mtk_probe(struct platform_device *pdev)
 		err = mtk_add_mac(eth, mac_np);
 		if (err) {
 			of_node_put(mac_np);
-			goto err_deinit_hw;
+			goto err_free_dev;
 		}
 	}
 
@@ -5655,6 +5644,7 @@ static int mtk_probe(struct platform_device *pdev)
 
 err_unreg_netdev:
 	mtk_unreg_dev(eth);
+	cancel_work_sync(&eth->pending_work);
 	netif_napi_del(&eth->tx_napi);
 	netif_napi_del(&eth->rx_napi);
 	free_netdev(eth->dummy_dev);
@@ -5663,7 +5653,6 @@ err_deinit_ppe:
 	mtk_mdio_cleanup(eth);
 err_free_dev:
 	mtk_free_dev(eth);
-err_deinit_hw:
 	mtk_hw_deinit(eth);
 err_wed_exit:
 	mtk_wed_exit();
@@ -5676,36 +5665,27 @@ err_destroy_sgmii:
 static void mtk_remove(struct platform_device *pdev)
 {
 	struct mtk_eth *eth = platform_get_drvdata(pdev);
-	struct mtk_mac *mac;
-	int i;
 
-	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
-		mtk_cleanup(eth);
-		synchronize_irq(eth->irq[MTK_FE_IRQ_SHARED]);
-		netif_napi_del(&eth->tx_napi);
-		netif_napi_del(&eth->rx_napi);
-		free_netdev(eth->dummy_dev);
-		mtk_hw_deinit(eth);
-		return;
+	/* unregister_netdev() stops each running MAC before DMA is freed. */
+	mtk_unreg_dev(eth);
+	cancel_delayed_work_sync(&eth->reset.monitor_work);
+	cancel_work_sync(&eth->pending_work);
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_INT)) {
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_SHARED], eth);
+	} else {
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_TX], eth);
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_RX], eth);
 	}
-
-	/* stop all devices to make sure that dma is properly shut down */
-	for (i = 0; i < MTK_MAX_DEVS; i++) {
-		if (!eth->netdev[i])
-			continue;
-		mtk_stop(eth->netdev[i]);
-		mac = netdev_priv(eth->netdev[i]);
-		phylink_disconnect_phy(mac->phylink);
-	}
-
-	mtk_wed_exit();
-	mtk_hw_deinit(eth);
 
 	netif_napi_del(&eth->tx_napi);
 	netif_napi_del(&eth->rx_napi);
-	mtk_cleanup(eth);
+	mtk_free_dev(eth);
+	mtk_sgmii_destroy(eth);
 	free_netdev(eth->dummy_dev);
+	mtk_wed_exit();
 	mtk_mdio_cleanup(eth);
+	mtk_hw_deinit(eth);
 }
 
 static const struct mtk_soc_data mt2701_data = {

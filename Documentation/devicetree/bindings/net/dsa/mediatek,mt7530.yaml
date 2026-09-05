@@ -154,6 +154,12 @@ properties:
         description:
           Phandle pointing to the mediatek pinctrl node.
 
+      mediatek,sysc:
+        $ref: /schemas/types.yaml#/definitions/phandle
+        description:
+          MT7620 system controller containing package identification used
+          to select the integrated PHY analog tuning parameters.
+
   mediatek,mcm:
     type: boolean
     description:
@@ -300,10 +306,14 @@ allOf:
           items:
             - const: esw
             - const: ephy
+        mdio:
+          required:
+            - mediatek,sysc
         interrupt-controller: false
         gpio-controller: false
         mediatek,mcm: false
       required:
+        - mdio
         - mediatek,sysc
         - resets
         - reset-names
@@ -311,6 +321,9 @@ allOf:
     else:
       properties:
         mediatek,sysc: false
+        mdio:
+          properties:
+            mediatek,sysc: false
         resets:
           maxItems: 1
         reset-names:

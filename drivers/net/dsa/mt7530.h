@@ -872,6 +872,7 @@ struct mt753x_pcs {
  * @phylink_mac_ops:	MAC link management operations
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
+ * @setup_tc:		Optional hardware traffic control operations
  * @vlan_index:		Translate VID to table index, or NULL for direct indexing
  * @vlan_prepare:	Reserve a VID mapping before adding a table entry
  * @stats_ops:		Counter layout, readout and polling operations
@@ -905,6 +906,8 @@ struct mt753x_info {
 	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;
 
+	int (*setup_tc)(struct dsa_switch *ds, int port,
+			enum tc_setup_type type, void *type_data);
 	int (*vlan_index)(struct mt7530_priv *priv, u16 vid);
 	int (*vlan_prepare)(struct mt7530_priv *priv, u16 vid, bool *allocated);
 	int (*setup_mdio)(struct mt7530_priv *priv);

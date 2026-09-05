@@ -3,8 +3,8 @@
 MT7620A/N net-next integration
 =============================
 
-Revision note: v4 adds the DSA review changes described in the final section
-and has build/configuration validation only. The FE-counter v3 revision has
+Revision note: v4 adds the DSA review changes and RAM validation described
+in the final sections. The FE-counter v3 revision has
 additional RAM results in the
 2026-09-05 section below. The original RAM results refer to the retained
 ``mt7620-integration`` at ``4104956dceab``. Keep these records distinct from
@@ -412,7 +412,48 @@ longer calls an MT7620-specific exported initialization helper.
 A full MIPS vmlinux/modules build passed with warnings treated as errors,
 with only the OOB tagger enabled. An x86_64 build of the MT7530 core, MMIO,
 MDIO and ordinary MTK tagger objects passed with the OOB tagger disabled.
-Both explicit tagger choices survive olddefconfig. These build results do
-not establish a new RAM-test result: the hardware record above belongs to
-v3. The seven-patch Ethernet review subset is unchanged by this DSA-only
+Both explicit tagger choices survive olddefconfig. The original hardware
+record above belongs to v3; additional v4 RAM results follow below.
+The seven-patch Ethernet review subset is unchanged by this DSA-only
 follow-up, and MT7620 PPE remains outside it.
+
+V4 RAM validation (2026-09-05)
+----------------------------
+
+The image built from ``1fa22db7d645`` was loaded by U-Boot into RAM on the
+same WE826-T2 MT7620A ECO6. Its SHA-256 is
+``894584e2f128b5fd37bcf4d373f7ca6bf6864e2592f85292203965bec73ccfaf``.
+Only NET_DSA_TAG_MTK_OOB was enabled; NET_DSA_TAG_MTK was disabled. The
+switch initialized, all five embedded PHYs registered with irq=MAC, and
+DSA tree setup completed. Physical traffic used LAN1 and WAN only.
+
+* Eight eight-second IPv4/IPv6 TCP RX/TX runs on LAN1/WAN received
+  79.87--80.01 Mbit/s at a requested 80 Mbit/s, with zero retransmissions.
+* An eight-second WAN bidirectional run received 79.87/79.74 Mbit/s with
+  7/0 retransmissions. Three repeats after FE/switch rebind received
+  79.72--80.00 Mbit/s per direction, with 12/0, 1/0 and 4/0 retransmissions.
+* To check whether those retransmissions were specific to v4, the retained
+  v3 RAM image was then booted on the same bench. Three identical runs
+  received 79.73--79.87 Mbit/s per direction, with 7/0, 17/0 and 4/0
+  retransmissions. FE, CPU-port and both physical-port error/drop counters
+  remained zero during the repeat sets on both revisions. This comparison
+  does not identify the cause of the occasional TCP retransmissions.
+* At WAN MTU 2030, three UDP packets of each IP length 1500, 1501, 2026
+  and 2030 were delivered with no GDM1 length errors. At MTU 1500, only
+  length 1500 passed and the larger lengths produced nine length errors.
+* The original short ping probe after the second close/open received no
+  replies; a later ten-packet probe passed without driver intervention.
+  With bounded reachability waiting after reopening, three repeated
+  close/open cycles each passed ten pings. FE totals remained monotonic
+  and reads while closed remained unchanged. This records a transient
+  reachability delay, not a demonstrated persistent driver failure.
+* Switch/FE unbind followed by FE/switch bind restored both ports, each
+  passing ten pings after reachability returned. The complete dmesg had
+  no BUG, WARNING, Oops or refcount diagnostics.
+
+The board subsequently returned to installed Linux 6.12.94. Persistent
+network/wireless configuration and wpad hashes matched the pre-test values;
+both links passed final stock-firmware pings. Temporary endpoint addresses,
+IPv6 settings, MTU and the task's TFTP service were restored. Flash was not
+written, and all six production-buildtree reference hashes were unchanged.
+No forced deferred-probe failure or long-duration soak was tested.

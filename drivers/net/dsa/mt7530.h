@@ -872,6 +872,10 @@ struct mt753x_pcs {
  * @phylink_mac_ops:	MAC link management operations
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
+ * @setup_mdio:		Register the internal MDIO bus and its interrupt source
+ * @irq_teardown:	Quiesce the link interrupt source before teardown
+ * @port_irq_enable:	Enable link interrupts when a user port opens
+ * @port_irq_disable:	Disable and synchronize link interrupts on close
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
  * @phy_write_c22:	Holding the way writing PHY port using C22
@@ -897,6 +901,10 @@ struct mt753x_info {
 	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;
 
+	int (*setup_mdio)(struct mt7530_priv *priv);
+	void (*irq_teardown)(void *priv);
+	void (*port_irq_enable)(struct mt7530_priv *priv, int port);
+	void (*port_irq_disable)(struct mt7530_priv *priv, int port);
 	int (*sw_setup)(struct dsa_switch *ds);
 	int (*phy_read_c22)(struct mt7530_priv *priv, int port, int regnum);
 	int (*phy_write_c22)(struct mt7530_priv *priv, int port, int regnum,

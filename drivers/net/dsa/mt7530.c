@@ -1467,6 +1467,22 @@ mt753x_cpu_port_enable(struct dsa_switch *ds, int port)
 			   PCR_PORT_VLAN_MASK, MT7530_PORT_FALLBACK_MODE);
 }
 
+static void mt7620_port_irq_enable(struct mt7530_priv *priv, int port)
+{
+	/* The PHY has been attached before the user port is opened. */
+	regmap_write(priv->regmap, MT7620_ISR, BIT(port));
+	regmap_clear_bits(priv->regmap, MT7620_IMR, BIT(port));
+}
+
+static void mt7620_port_irq_disable(struct mt7530_priv *priv, int port)
+{
+	if (port >= MT7530_NUM_PHYS)
+		return;
+
+	regmap_set_bits(priv->regmap, MT7620_IMR, BIT(port));
+	synchronize_irq(priv->irq);
+}
+
 static int
 mt7530_port_enable(struct dsa_switch *ds, int port,
 		   struct phy_device *phy)
@@ -1491,11 +1507,8 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 
 	mutex_unlock(&priv->reg_mutex);
 
-	if (priv->id == ID_MT7620 && dsa_port_is_user(dp)) {
-		/* The PHY has been attached before the user port is opened. */
-		regmap_write(priv->regmap, MT7620_ISR, BIT(port));
-		regmap_clear_bits(priv->regmap, MT7620_IMR, BIT(port));
-	}
+	if (priv->info->port_irq_enable && dsa_port_is_user(dp))
+		priv->info->port_irq_enable(priv, port);
 
 	if (priv->id != ID_MT7530 && priv->id != ID_MT7621)
 		return 0;
@@ -1513,10 +1526,8 @@ mt7530_port_disable(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	if (priv->id == ID_MT7620 && port < MT7530_NUM_PHYS) {
-		regmap_set_bits(priv->regmap, MT7620_IMR, BIT(port));
-		synchronize_irq(priv->irq);
-	}
+	if (priv->info->port_irq_disable)
+		priv->info->port_irq_disable(priv, port);
 
 	mutex_lock(&priv->reg_mutex);
 
@@ -2565,7 +2576,7 @@ mt7530_free_mdio_irq(struct mt7530_priv *priv)
 }
 
 static int
-mt7530_setup_mdio(struct mt7530_priv *priv)
+mt7530_register_mdio(struct mt7530_priv *priv, bool mac_irq)
 {
 	struct device_node *mnp, *np = priv->dev->of_node;
 	struct dsa_switch *ds = priv->ds;
@@ -2601,7 +2612,7 @@ mt7530_setup_mdio(struct mt7530_priv *priv)
 	if (priv->irq_domain && !mnp)
 		mt7530_setup_mdio_irq(priv);
 
-	if (priv->id == ID_MT7620) {
+	if (mac_irq) {
 		int port;
 
 		for (port = 0; port < MT7530_NUM_PHYS; port++)
@@ -2619,6 +2630,36 @@ mt7530_setup_mdio(struct mt7530_priv *priv)
 out:
 	of_node_put(mnp);
 	return ret;
+}
+
+static int mt7530_setup_mdio(struct mt7530_priv *priv)
+{
+	int ret;
+
+	ret = mt7530_setup_irq(priv);
+	if (ret)
+		return ret;
+
+	return mt7530_register_mdio(priv, false);
+}
+
+static int mt7620_setup_mdio(struct mt7530_priv *priv)
+{
+	int ret;
+
+	ret = mt7530_register_mdio(priv, true);
+	if (ret)
+		return ret;
+
+	/* The MDIO bus must outlive the handler, including probe unwind. */
+	if (!priv->internal_mdio)
+		return -ENODEV;
+	ret = devm_request_threaded_irq(priv->dev, priv->irq,
+					NULL, mt7620_link_irq, IRQF_ONESHOT,
+					dev_name(priv->dev), priv);
+	if (ret)
+		return ret;
+	return devm_add_action_or_reset(priv->dev, mt7620_mask_irq, priv);
 }
 
 static int
@@ -3588,29 +3629,9 @@ mt753x_setup(struct dsa_switch *ds)
 	if (ret)
 		return ret;
 
-	if (priv->id != ID_MT7620) {
-		ret = mt7530_setup_irq(priv);
-		if (ret)
-			return ret;
-	}
-
-	ret = mt7530_setup_mdio(priv);
+	ret = priv->info->setup_mdio(priv);
 	if (ret)
 		return ret;
-
-	if (priv->id == ID_MT7620) {
-		/* The MDIO bus must outlive the handler, including probe unwind. */
-		if (!priv->internal_mdio)
-			return -ENODEV;
-		ret = devm_request_threaded_irq(priv->dev, priv->irq,
-						NULL, mt7620_link_irq, IRQF_ONESHOT,
-						dev_name(priv->dev), priv);
-		if (ret)
-			return ret;
-		ret = devm_add_action_or_reset(priv->dev, mt7620_mask_irq, priv);
-		if (ret)
-			return ret;
-	}
 
 	/* Initialise the PCS devices */
 	for (i = 0; i < priv->ds->num_ports; i++) {
@@ -3644,8 +3665,8 @@ mt753x_teardown(struct dsa_switch *ds)
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	if (priv->id == ID_MT7620)
-		mt7620_mask_irq(priv);
+	if (priv->info->irq_teardown)
+		priv->info->irq_teardown(priv);
 	if (priv->bus || priv->id == ID_MT7620)
 		cancel_delayed_work_sync(&priv->stats_work);
 }
@@ -3874,6 +3895,10 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 const struct mt753x_info mt753x_table[] = {
 	[ID_MT7620] = {
 		.id = ID_MT7620,
+		.setup_mdio = mt7620_setup_mdio,
+		.irq_teardown = mt7620_mask_irq,
+		.port_irq_enable = mt7620_port_irq_enable,
+		.port_irq_disable = mt7620_port_irq_disable,
 		.phylink_mac_ops = &mt7620_phylink_mac_ops,
 		.phy_iac = MT7620_PHY_IAC,
 		.gmaccr = MT7620_GMACCR,
@@ -3890,6 +3915,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7621] = {
 		.id = ID_MT7621,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.gmaccr = MT7530_GMACCR,
@@ -3908,6 +3934,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7530] = {
 		.id = ID_MT7530,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.gmaccr = MT7530_GMACCR,
@@ -3926,6 +3953,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7531] = {
 		.id = ID_MT7531,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
@@ -3945,6 +3973,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7988] = {
 		.id = ID_MT7988,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
@@ -3963,6 +3992,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7581] = {
 		.id = ID_EN7581,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
@@ -3981,6 +4011,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_AN7583] = {
 		.id = ID_AN7583,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD | MAC_2500FD,
 		.phy_iac = MT7531_PHY_IAC,
@@ -3999,6 +4030,7 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7528] = {
 		.id = ID_EN7528,
+		.setup_mdio = mt7530_setup_mdio,
 		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,

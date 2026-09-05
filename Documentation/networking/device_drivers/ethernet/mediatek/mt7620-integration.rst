@@ -3,7 +3,9 @@
 MT7620A/N net-next integration
 =============================
 
-Revision note: the FE-counter revision has additional RAM results in the
+Revision note: v4 adds the DSA review changes described in the final section
+and has build/configuration validation only. The FE-counter v3 revision has
+additional RAM results in the
 2026-09-05 section below. The original RAM results refer to the retained
 ``mt7620-integration`` at ``4104956dceab``. Keep these records distinct from
 the intermediate offline-only ``mt7620-integration-v2`` revision.
@@ -395,3 +397,22 @@ Network/wireless configuration and the installed wpad binary have identical
 before/after hashes. Temporary endpoint addresses and the TFTP service were
 removed. The production buildtree's six reference files still match their
 recorded hashes; it was not used as a build output directory.
+
+DSA review revision (v4)
+-----------------------
+
+The ``mt7620-integration-v4`` branch addresses Daniel Golle's three review
+comments on the original switch commit. Both MediaTek tag protocols are
+now implied rather than selected by NET_DSA_MT7530, so a configuration may
+omit the unused protocol. MMIO compatible entries retain alphabetic order.
+MT7620 state allocation and syscon/EPHY-reset/IRQ acquisition now occur in
+``mt7620_setup()`` before hardware configuration; the shared MMIO probe no
+longer calls an MT7620-specific exported initialization helper.
+
+A full MIPS vmlinux/modules build passed with warnings treated as errors,
+with only the OOB tagger enabled. An x86_64 build of the MT7530 core, MMIO,
+MDIO and ordinary MTK tagger objects passed with the OOB tagger disabled.
+Both explicit tagger choices survive olddefconfig. These build results do
+not establish a new RAM-test result: the hardware record above belongs to
+v3. The seven-patch Ethernet review subset is unchanged by this DSA-only
+follow-up, and MT7620 PPE remains outside it.

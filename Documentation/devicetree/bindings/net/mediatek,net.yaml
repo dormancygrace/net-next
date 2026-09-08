@@ -72,12 +72,6 @@ properties:
   sram:
     maxItems: 1
 
-  mediatek,sysc:
-    $ref: /schemas/types.yaml#/definitions/phandle
-    description:
-      MT7620 system controller containing the silicon ECO revision used to
-      determine scatter-gather and segmentation offload capabilities.
-
   mediatek,ethsys:
     $ref: /schemas/types.yaml#/definitions/phandle
     description:
@@ -175,7 +169,6 @@ allOf:
         - resets
         - reset-names
         - mac@0
-        - mediatek,sysc
     else:
       properties:
         clocks:
@@ -186,7 +179,6 @@ allOf:
           minItems: 3
         reset-names:
           minItems: 3
-        mediatek,sysc: false
       required:
         - mediatek,ethsys
   - if:

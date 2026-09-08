@@ -17,6 +17,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/if_vlan.h>
 #include <linux/reset.h>
+#include <linux/sys_soc.h>
 #include <linux/tcp.h>
 #include <linux/interrupt.h>
 #include <linux/pinctrl/devinfo.h>
@@ -34,6 +35,18 @@
 #include "mtk_wed.h"
 
 static bool mtk_uses_mtk_oob(struct net_device *dev);
+
+static const struct soc_device_attribute mt7620_soc_match[] = {
+	{ .family = "Ralink", .soc_id = "mt7620[an]" },
+	{ }
+};
+
+/* ECO 5 and later support TX checksum offload and segmentation. */
+static const struct soc_device_attribute mt7620_tx_offload_match[] = {
+	{ .family = "Ralink", .soc_id = "mt7620[an]", .revision = "*.[5-9]" },
+	{ .family = "Ralink", .soc_id = "mt7620[an]", .revision = "*.1[0-5]" },
+	{ }
+};
 
 static int mtk_msg_level = -1;
 module_param_named(msg_level, mtk_msg_level, int, 0);
@@ -5299,7 +5312,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 		netif_keep_dst(eth->netdev[id]);
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
-	    (eth->chip_rev & GENMASK(3, 0)) >= 5)
+	    soc_device_match(mt7620_tx_offload_match))
 		features |= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO |
 			    NETIF_F_TSO6 | NETIF_F_IPV6_CSUM;
 
@@ -5445,15 +5458,9 @@ static int mtk_probe(struct platform_device *pdev)
 		eth->ip_align = NET_IP_ALIGN;
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
-		struct regmap *sysc;
-
-		sysc = syscon_regmap_lookup_by_phandle(eth->dev->of_node,
-						       "mediatek,sysc");
-		if (IS_ERR(sysc))
-			return PTR_ERR(sysc);
-		err = regmap_read(sysc, 0x0c, &eth->chip_rev);
-		if (err)
-			return err;
+		if (!soc_device_match(mt7620_soc_match))
+			return dev_err_probe(eth->dev, -ENODEV,
+					     "MT7620 SoC identification unavailable\n");
 
 		eth->rst_fe = devm_reset_control_get_exclusive(eth->dev, "fe");
 		if (IS_ERR(eth->rst_fe))

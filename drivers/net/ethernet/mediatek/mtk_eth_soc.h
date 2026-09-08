@@ -1297,7 +1297,6 @@ struct mtk_soc_data {
  */
 
 struct mtk_eth {
-	u32				chip_rev;
 	struct device			*dev;
 	struct device			*dma_dev;
 	void __iomem			*base;

@@ -368,7 +368,6 @@ config MOTORCOMM_PHY
 config MT7620_EPHY
 	tristate "MediaTek MT7620 Fast Ethernet PHYs"
 	depends on SOC_MT7620 || COMPILE_TEST
-	depends on MFD_SYSCON
 	select PHY_PACKAGE
 	help
 	  Support for the five integrated Fast Ethernet PHYs in MT7620.

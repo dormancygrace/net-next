@@ -4,19 +4,15 @@
  * Tuning values from the Ralink initialization sequence used by OpenWrt
  * gsw_mt7620.c (John Crispin, Felix Fietkau and Michael Lee).
  */
-#include <linux/mfd/syscon.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/phy.h>
-#include <linux/regmap.h>
+#include <linux/sys_soc.h>
 
 #include "phylib.h"
 
 #define MT7620_PHY_ID		0x03a29400
 #define MT7620_PHY_COUNT	5
 #define MT7620_PHY_PAGE		0x1f
-#define MT7620_SYSC_REV		0x0c
-#define MT7620_SYSC_REV_BGA	BIT(16)
 
 struct mt7620_ephy_shared {
 	bool bga;
@@ -117,26 +113,29 @@ static int mt7620_ephy_config_init(struct phy_device *phydev)
 	return phy_write_paged(phydev, 0xa000, 16, local[phydev->mdio.addr]);
 }
 
+static const bool mt7620_ephy_bga = true;
+static const bool mt7620_ephy_qfn;
+
+static const struct soc_device_attribute mt7620_ephy_soc_match[] = {
+	{ .family = "Ralink", .soc_id = "mt7620a", .data = &mt7620_ephy_bga },
+	{ .family = "Ralink", .soc_id = "mt7620n", .data = &mt7620_ephy_qfn },
+	{ }
+};
+
 static int mt7620_ephy_probe(struct phy_device *phydev)
 {
-	struct device_node *np = dev_of_node(&phydev->mdio.bus->dev);
+	const struct soc_device_attribute *soc;
 	struct mt7620_ephy_shared *shared;
-	struct regmap *sysc;
-	u32 rev;
 	int ret;
 
 	/* The integrated MDIO bus uses the hardware's base address zero. */
 	if (phydev->mdio.addr >= MT7620_PHY_COUNT)
 		return -EINVAL;
 
-	sysc = syscon_regmap_lookup_by_phandle(np, "mediatek,sysc");
-	if (IS_ERR(sysc))
-		return dev_err_probe(&phydev->mdio.dev, PTR_ERR(sysc),
-				     "failed to get system controller\n");
-
-	ret = regmap_read(sysc, MT7620_SYSC_REV, &rev);
-	if (ret)
-		return ret;
+	soc = soc_device_match(mt7620_ephy_soc_match);
+	if (!soc)
+		return dev_err_probe(&phydev->mdio.dev, -ENODEV,
+				     "MT7620 SoC identification unavailable\n");
 
 	ret = devm_phy_package_join(&phydev->mdio.dev, phydev, 0,
 				    sizeof(*shared));
@@ -145,7 +144,7 @@ static int mt7620_ephy_probe(struct phy_device *phydev)
 
 	shared = phy_package_get_priv(phydev);
 	phy_package_lock(phydev);
-	shared->bga = !!(rev & MT7620_SYSC_REV_BGA);
+	shared->bga = *(const bool *)soc->data;
 	phy_package_unlock(phydev);
 
 	return 0;

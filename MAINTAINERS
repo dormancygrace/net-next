@@ -22732,6 +22732,7 @@ M:	Sergio Paracuellos <sergio.paracuellos@gmail.com>
 L:	linux-mips@vger.kernel.org
 S:	Maintained
 F:	arch/mips/ralink
+F:	drivers/soc/mediatek/mt7620-socinfo.c
 
 RALINK MT7621 MIPS ARCHITECTURE
 M:	Chester A. Unal <chester.a.unal@arinc9.com>

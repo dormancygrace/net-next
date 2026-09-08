@@ -1,14 +1,13 @@
 .. SPDX-License-Identifier: GPL-2.0-only
 
 MT7620A/N net-next integration
-=============================
+==============================
 
-Revision note: v4 adds the DSA review changes and RAM validation described
-in the final sections. The FE-counter v3 revision has
-additional RAM results in the
-2026-09-05 section below. The original RAM results refer to the retained
-``mt7620-integration`` at ``4104956dceab``. Keep these records distinct from
-the intermediate offline-only ``mt7620-integration-v2`` revision.
+Revision note: v6 centralizes SoC identity as described in the final
+section. The v5 PHY/DSA review and v4/v3 results below are historical
+records of their respective source versions. The original RAM results
+refer to the retained ``mt7620-integration`` at ``4104956dceab``; v2 was
+an intermediate revision validated only offline.
 
 This is an integration and hardware-validation tree, based on net-next
 ``6797f12ea40e788c7da47a7cf9ea4a9341548de0``. It follows Daniel Golle's
@@ -24,8 +23,8 @@ The available test board is a ZBTlink WE826-T2. Its production OpenWrt
 buildtree is kept separate and is not used as a build output directory.
 Historical OpenWrt test results are not evidence of this tree's operation.
 
-Architecture and limits
------------------------
+Initial architecture and limits (historical)
+--------------------------------------------
 
 The FE driver owns PDMA and reset line 21. The MMIO switch driver owns ESW
 reset 23, EPHY reset 24, MDIO, PHY tuning and link interrupts. Both use the
@@ -70,8 +69,8 @@ totals and polled once per second while the conduit is open. The worker is
 cancelled before DMA shutdown; cached totals remain available while down.
 PPE GDM2 counters are not included.
 
-Implementation stages
----------------------
+Initial implementation stages (historical)
+------------------------------------------
 
 1. **Platform prerequisites.** Correct the MT7620 SoC compatible, CPU node,
    bus range and UART alias. Describe the interrupt-controller compatible
@@ -189,7 +188,7 @@ Do not add a Tested-by trailer without a human tester's authorization.
 MT7620N and other boards/revisions have not been hardware tested.
 
 Completed hardware checks (WE826-T2, MT7620A ECO6)
-------------------------------------------------
+--------------------------------------------------
 
 The following short tests used two external 100BASE-T full-duplex links.
 They establish basic integration behavior, not long-duration qualification.
@@ -309,7 +308,7 @@ branches and an RFC cover letter does not send a mailing-list submission.
 .. _MT7620 Programming Guide: https://w.electrodragon.com/w/images/5/51/MT7620_ProgrammingGuide_20121101.pdf
 
 Offline review revision (2026-09-05)
------------------------------------
+------------------------------------
 
 The hardware results above belong to ``mt7620-integration`` at
 ``4104956dceab`` (code ``3100a3103fb0``). The separate
@@ -399,7 +398,7 @@ removed. The production buildtree's six reference files still match their
 recorded hashes; it was not used as a build output directory.
 
 DSA review revision (v4)
------------------------
+------------------------
 
 The ``mt7620-integration-v4`` branch addresses Daniel Golle's three review
 comments on the original switch commit. Both MediaTek tag protocols are
@@ -418,7 +417,7 @@ The seven-patch Ethernet review subset is unchanged by this DSA-only
 follow-up, and MT7620 PPE remains outside it.
 
 V4 RAM validation (2026-09-05)
-----------------------------
+------------------------------
 
 The image built from ``1fa22db7d645`` was loaded by U-Boot into RAM on the
 same WE826-T2 MT7620A ECO6. Its SHA-256 is
@@ -459,7 +458,7 @@ written, and all six production-buildtree reference hashes were unchanged.
 No forced deferred-probe failure or long-duration soak was tested.
 
 DSA architecture review revision (v5)
-------------------------------------
+-------------------------------------
 
 The ``mt7620-integration-v5`` branch addresses the four subsequent review
 comments on allocation, duplicate private state, PHY ownership and model
@@ -508,7 +507,7 @@ the changed objects separately passed warnings-as-errors. Switch binding
 schema/examples and the eval/WE826 DTBs pass the selected binding checks.
 
 V5 RAM validation (2026-09-05)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The final image SHA-256 is
 ``3825c74aa0121eaaaf3398c4949e504c9f1aee9c7eee7dc20e7c7b0ef2c17984``.
@@ -568,3 +567,93 @@ previous FE counters), full-tree allmod/allyes validation, wider runtime
 and error-path coverage, and human review/DCO remain outstanding. Only
 WE826 ECO6 has runtime evidence here. The separate seven-patch Ethernet
 RFC is unchanged and unsent, and MT7620 PPE remains outside its first series.
+
+
+V6: shared SoC identification (2026-09-08)
+------------------------------------------
+
+The code head is ``8c2044391cbf412d16192f47d7ae99c89babc6c2``, based on
+v5 ``065e3d4a9c24970198eaefadbd687378e4e2f57c``. This addresses Daniel
+Golle's request to centralize model/revision identification in
+``drivers/soc/mediatek/``, in comment 199560899 on the PHY commit
+``cafded13060f7adf2e3d8fdc3625ad58afda6342``.
+
+``mt7620-socinfo`` registers the existing ``Ralink`` family and
+``mt7620a``/``mt7620n`` model IDs, adding decimal ``version.ECO`` revision.
+It shares the syscon regmap with the clock/reset driver without binding a
+second platform driver to the same device. Its built-in subsys initcall
+runs after SoC bus registration and before PHY/Ethernet device initcalls;
+the linked MIPS kernels' initcall tables confirm this ordering. Early
+architecture setup and the old MT7628/MT7688 registration remain intact;
+MT7620A/N no longer get a second registration from arch code.
+
+PHY and Ethernet use ``soc_device_match()`` and fail probe if the model
+cannot be identified. The PHY selects the same BGA/QFN tuning values.
+Ethernet retains ECO >= 5 TX offloads, matching both single- and
+two-digit decimal ECO values. The raw MAC ``chip_rev`` field and the
+identity-only FE/MDIO phandles are removed. The switch syscon phandle
+remains for operational PHY/pin mode control. No PHY tuning, packet-path
+logic or PPE support was changed.
+
+V6 verification
+~~~~~~~~~~~~~~~
+
+* Full MIPS vmlinux/modules/DT builds with built-in and modular network
+  drivers. Changed objects also pass ``W=1 KCFLAGS=-Werror`` and sparse.
+* Changed provider/PHY/Ethernet object builds on ARMv7, ARM64 and x86_64
+  allmodconfig/allyesconfig-derived configs. These are object checks,
+  not full links or hardware tests on those platforms.
+* Existing MIPS Ethernet sparse diagnostics were reproduced on v5 with
+  the same configuration; no new diagnostics were introduced by v6.
+  The new SoC provider and modified PHY objects emit none. Existing
+  full-build MIPS traps/math-emu warnings are outside this change.
+* Selected Ethernet/switch binding schemas and examples pass
+  ``dt_binding_check``. A/N eval and WE826 DTBs pass the selected
+  ``dtbs_check`` validations. A Python jobserver warning occurred without
+  schema diagnostics. These are selected-schema checks.
+* Host tests compile the actual provider body, consumer tables and kernel
+  glob/SoC attribute matcher under ASan/UBSan. All 512 package/version/ECO
+  combinations and six discovery/resource-error cases pass, including
+  ECO 4/5 and 9/10 boundaries. Kernel resource APIs are mocked; these are
+  not hardware fault-injection tests.
+* All four code/binding/DTS patches pass strict checkpatch with sign-off
+  checking disabled. No human DCO or review trailers were fabricated.
+
+V6 RAM results
+~~~~~~~~~~~~~~
+
+The image SHA-256 is
+``aa88298dfeadebd6bf9e450f1904af139da50d33656c1e40ef285c7dab6cfd53``.
+The WE826-T2 boots Linux 7.3.0-rc1 from RAM with one SoC device reporting
+``Ralink``, ``mt7620a``, ``2.6``. This agrees with early arch identification
+and the previous installed-firmware log; the old private inventory's
+MT7620N label was incorrect. All five PHYs bind to the dedicated driver.
+TX IPv4/IPv6 checksum, SG, TSO and TSO6 remain enabled.
+
+WAN and LAN1 each pass five IPv4 and five IPv6 pings. Eight eight-second
+TCP RX/TX tests across both ports and address families receive
+79.88--80.01 Mbit/s at a requested 80 Mbit/s, without retransmissions.
+The WAN bidirectional run receives 79.87/79.74 Mbit/s with 7/0
+retransmissions. This is a short paced check, not a maximum-rate or
+loss-free soak result; the earlier v5 tests also had occasional
+bidirectional retransmissions, whose cause is not established here.
+
+Unbinding the switch and FE, then rebinding FE and switch, restores all
+PHY ports after init memory has been released. SoC identity and offload
+features remain available; both ports again pass five IPv4 and five IPv6
+pings. The captured kernel log has no BUG, WARNING, Oops or refcount
+diagnostics.
+
+The device returned to installed Linux 6.12.94. Network/wireless and
+wpad hashes match the values captured before this test. After startup,
+both stock-firmware ports pass three pings. Temporary endpoint addresses
+and IPv6 settings are restored, and the task's TFTP service is stopped.
+No flash writes or production-buildtree writes were performed.
+
+Runtime coverage is MT7620A version 2 ECO6 with built-in drivers. MT7620N,
+earlier ECOs, MT7628/MT7688 and runtime module loading are not covered by
+this hardware test. No earlier v5 VLAN, jumbo or fault-injection results
+are claimed for this revision. The Ethernet RFC needs the shared provider
+prerequisite when it is next refreshed; it remains unsent, with PPE
+excluded. Human review/DCO and the wider upstream validation items above
+remain outstanding.

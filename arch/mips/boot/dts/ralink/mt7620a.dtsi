@@ -74,7 +74,6 @@
 
 	ethernet: ethernet@10100000 {
 		compatible = "mediatek,mt7620-eth";
-		mediatek,sysc = <&sysc>;
 		reg = <0x10100000 0x10000>;
 		clocks = <&sysc MT7620_CLK_BUS>;
 		clock-names = "fe";
@@ -112,7 +111,6 @@
 		mdio {
 			#address-cells = <1>;
 			#size-cells = <0>;
-			mediatek,sysc = <&sysc>;
 
 			ephy0: ethernet-phy@0 {
 				reg = <0>;

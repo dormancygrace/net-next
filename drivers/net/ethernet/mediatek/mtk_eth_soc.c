@@ -1644,8 +1644,14 @@ static void mtk_tx_set_dma_desc_v1(struct net_device *dev, void *txd,
 		if (info->csum)
 			data |= TX_DMA_CHKSUM;
 		/* vlan header offload */
-		if (info->vlan)
-			data |= TX_DMA_INS_VLAN | info->vlan_tci;
+		if (info->vlan) {
+			if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+				data |= MT7620_TX_DMA_INS_VLAN |
+					((info->vlan_tci >> VLAN_PRIO_SHIFT) << 4) |
+					(info->vlan_tci & 0xf);
+			else
+				data |= TX_DMA_INS_VLAN | info->vlan_tci;
+		}
 	}
 	WRITE_ONCE(desc->txd4, data);
 }
@@ -4395,6 +4401,30 @@ out:
 			      MTK_DMA_MONITOR_TIMEOUT);
 }
 
+static void mtk_mt7620_vlan_write(struct mtk_eth *eth, u32 idx, u16 vid)
+{
+	u32 reg = MT7620_CDMA_VLAN_BASE + (idx / 2) * sizeof(u32);
+	u32 val;
+
+	val = readl(eth->base + reg);
+	if (idx & 1)
+		val = (val & GENMASK(15, 0)) | (vid << 16);
+	else
+		val = (val & GENMASK(31, 16)) | vid;
+	writel(val, eth->base + reg);
+	/* Complete the table write before a new mapping can be published. */
+	readl(eth->base + reg);
+}
+
+static void mtk_mt7620_vlan_restore(struct mtk_eth *eth)
+{
+	u32 idx;
+
+	for (idx = 0; idx < MT7620_CDMA_VLAN_SLOTS; idx++)
+		mtk_mt7620_vlan_write(eth, idx,
+				      READ_ONCE(eth->mt7620_vlan_vid[idx]));
+}
+
 static int mtk_hw_init(struct mtk_eth *eth, bool reset)
 {
 	u32 dma_mask = ETHSYS_DMA_AG_MAP_PDMA | ETHSYS_DMA_AG_MAP_QDMA |
@@ -4429,6 +4459,7 @@ static int mtk_hw_init(struct mtk_eth *eth, bool reset)
 		usleep_range(1000, 1200);
 
 		mtk_m32(eth, 0, MT7620_CDMA_CSUM_EN, MT7620_CDMA_CSG_CFG);
+		mtk_mt7620_vlan_restore(eth);
 		mtk_dim_rx(&eth->rx_dim.work);
 		mtk_dim_tx(&eth->tx_dim.work);
 		mtk_tx_irq_disable(eth, ~0);
@@ -5113,6 +5144,64 @@ static const struct ethtool_ops mtk_ethtool_ops = {
 	.set_eee		= mtk_set_eee,
 };
 
+static netdev_features_t mtk_mt7620_features_check(struct sk_buff *skb,
+						   struct net_device *dev,
+						   netdev_features_t features)
+{
+	struct mtk_mac *mac = netdev_priv(dev);
+	struct mtk_eth *eth = mac->hw;
+	u32 idx;
+	u16 vid;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    (features & NETIF_F_HW_VLAN_CTAG_TX) &&
+	    skb_vlan_tag_present(skb)) {
+		vid = skb_vlan_tag_get_id(skb);
+		idx = vid & (MT7620_CDMA_VLAN_SLOTS - 1);
+		/* The descriptor cannot encode the VLAN DEI bit. */
+		if (skb_vlan_tag_get_cfi(skb) ||
+		    READ_ONCE(eth->mt7620_vlan_vid[idx]) != vid)
+			features &= ~NETIF_F_HW_VLAN_CTAG_TX;
+	}
+
+	return features;
+}
+
+static int mtk_mt7620_vlan_tx_add_vid(struct net_device *dev, __be16 proto,
+				      u16 vid)
+{
+	struct mtk_mac *mac = netdev_priv(dev);
+	struct mtk_eth *eth = mac->hw;
+	u32 idx = vid & (MT7620_CDMA_VLAN_SLOTS - 1);
+
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) ||
+	    !IS_ENABLED(CONFIG_NET_DSA) ||
+	    proto != htons(ETH_P_8021Q))
+		return 0;
+
+	/* Descriptors carry a slot index, so an assigned entry must remain
+	 * unchanged even after its VID is removed. Keep slot 0 for VID 0;
+	 * aliases use software insertion through ndo_features_check().
+	 */
+	if (!idx || READ_ONCE(eth->mt7620_vlan_vid[idx]))
+		return 0;
+	if (!netif_device_present(dev))
+		return -ENODEV;
+
+	mtk_mt7620_vlan_write(eth, idx, vid);
+	/* Order the table write before the lockless shadow publication. */
+	wmb();
+	WRITE_ONCE(eth->mt7620_vlan_vid[idx], vid);
+
+	return 0;
+}
+
+static void mtk_mt7620_vlan_tx_kill_vid(struct net_device *dev, __be16 proto,
+					u16 vid)
+{
+	/* Retain the mapping for descriptors still owned by DMA. */
+}
+
 static const struct net_device_ops mtk_netdev_ops = {
 	.ndo_uninit		= mtk_uninit,
 	.ndo_open		= mtk_open,
@@ -5126,6 +5215,9 @@ static const struct net_device_ops mtk_netdev_ops = {
 	.ndo_get_stats64        = mtk_get_stats64,
 	.ndo_fix_features	= mtk_fix_features,
 	.ndo_set_features	= mtk_set_features,
+	.ndo_features_check	= mtk_mt7620_features_check,
+	.ndo_vlan_tx_add_vid	= mtk_mt7620_vlan_tx_add_vid,
+	.ndo_vlan_tx_kill_vid	= mtk_mt7620_vlan_tx_kill_vid,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= mtk_poll_controller,
 #endif
@@ -5315,6 +5407,10 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	    soc_device_match(mt7620_tx_offload_match))
 		features |= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO |
 			    NETIF_F_TSO6 | NETIF_F_IPV6_CSUM;
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    IS_ENABLED(CONFIG_NET_DSA))
+		features |= NETIF_F_HW_VLAN_CTAG_TX;
 
 	eth->netdev[id]->hw_features = features;
 	if (eth->hwlro)

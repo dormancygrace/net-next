@@ -337,6 +337,9 @@ struct reset_control;
 #define TX_DMA_FPORT_SHIFT	25
 #define TX_DMA_FPORT_MASK	0x7
 #define TX_DMA_INS_VLAN		BIT(16)
+#define MT7620_TX_DMA_INS_VLAN	BIT(7)
+#define MT7620_CDMA_VLAN_BASE	0x430
+#define MT7620_CDMA_VLAN_SLOTS	16
 
 /* QDMA descriptor txd3 */
 #define TX_DMA_OWNER_CPU	BIT(31)
@@ -1347,6 +1350,7 @@ struct mtk_eth {
 	struct dim			tx_dim;
 
 	int				ip_align;
+	u16				mt7620_vlan_vid[MT7620_CDMA_VLAN_SLOTS];
 
 	struct metadata_dst		*dsa_meta[MTK_MAX_DSA_PORTS];
 

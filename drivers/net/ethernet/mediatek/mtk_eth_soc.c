@@ -4882,7 +4882,8 @@ static void mtk_get_drvinfo(struct net_device *dev,
 
 	strscpy(info->driver, mac->hw->dev->driver->name, sizeof(info->driver));
 	strscpy(info->bus_info, dev_name(mac->hw->dev), sizeof(info->bus_info));
-	info->n_stats = ARRAY_SIZE(mtk_ethtool_stats);
+	info->n_stats = MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT7620) ?
+			ARRAY_SIZE(mt7620_mib) : ARRAY_SIZE(mtk_ethtool_stats);
 }
 
 static u32 mtk_get_msglevel(struct net_device *dev)

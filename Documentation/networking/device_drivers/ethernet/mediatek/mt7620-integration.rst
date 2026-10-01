@@ -656,9 +656,9 @@ read-clear accumulation, and metadata/PHY/DMA open failures with a newer
 NETSYS control. They do not test real ordering or interrupt concurrency.
 
 Full MIPS built-in/modular kernel, module and DTB builds pass. ARMv7 and
-ARM64 changed-object builds pass. The x86 allmod/allyes-derived builds
-enable OF/COMPILE_TEST and disable BTF/debug information; their results
-are recorded separately. Changed objects pass W=1, Werror and sparse.
+ARM64 changed-object builds pass. Full x86 allmod/allyes-derived kernel
+and module builds pass with OF/COMPILE_TEST enabled and BTF/debug
+information disabled. Changed objects pass W=1, Werror and sparse.
 Bindings/DTS are unchanged from v6's selected-schema checks.
 
 The OpenWrt backport passes native prepare/refresh and full kernel/module

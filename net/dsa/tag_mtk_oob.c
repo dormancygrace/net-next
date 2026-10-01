@@ -80,6 +80,7 @@ static void mtk_oob_disconnect(struct dsa_switch *ds)
 static const struct dsa_device_ops mtk_oob_ops = {
 	.name		= MTK_OOB_NAME,
 	.proto		= DSA_TAG_PROTO_MTK_OOB,
+	.hw_vlan_tx	= true,
 	.connect	= mtk_oob_connect,
 	.disconnect	= mtk_oob_disconnect,
 	.xmit		= mtk_oob_xmit,

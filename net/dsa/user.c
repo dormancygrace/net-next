@@ -2715,6 +2715,11 @@ void dsa_user_setup_tagger(struct net_device *user)
 
 	user->features = conduit->vlan_features | NETIF_F_HW_TC;
 	user->hw_features |= NETIF_F_HW_TC;
+	if (cpu_dp->tag_ops->hw_vlan_tx &&
+	    (conduit->features & NETIF_F_HW_VLAN_CTAG_TX)) {
+		user->features |= NETIF_F_HW_VLAN_CTAG_TX;
+		user->hw_features |= NETIF_F_HW_VLAN_CTAG_TX;
+	}
 	if (user->needed_tailroom)
 		user->features &= ~(NETIF_F_SG | NETIF_F_FRAGLIST);
 	if (ds->needs_standalone_vlan_filtering)

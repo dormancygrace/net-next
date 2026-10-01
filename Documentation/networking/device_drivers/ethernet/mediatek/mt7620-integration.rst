@@ -674,9 +674,12 @@ version 2 ECO6, Linux 6.18.44 with modular FE and DSA:
 * TSO/RX-checksum toggles, FE/rtnetlink counter growth, cached down-state
   reads and monotonic close/open totals pass.
 
+The author also confirms working OpenWrt operation on D-Link DWR-921 C3
+(MT7620N), comparable to MT7620A. The detailed matrix above is from WE826-T2.
+
 These are short paced correctness tests. Linux v7 has not booted on
-hardware. MT7620N, older ECOs, other MediaTek runtime, forced busy-DMA
-failure and long scheduler stalls remain untested. Standard-statistics
+hardware. Older ECO-specific coverage, other MediaTek runtime, forced
+busy-DMA failure and long scheduler stalls remain untested. Standard-statistics
 uAPI and the new netdevice/tagger API need subsystem review. The Ethernet
 RFC still needs the shared-provider prerequisite; PPE and Wi-Fi remain
 outside this transfer.

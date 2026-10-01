@@ -73,11 +73,16 @@
       "conduit_cycle": "pass with DSA user ports reopened",
       "counter_feature_cases": 6,
       "cached_down_state_and_monotonic_close_open_totals": "pass"
+    },
+    "additional_author_hardware_test": {
+      "board": "D-Link DWR-921 C3",
+      "soc": "MT7620N",
+      "result": "Author confirms correct operation comparable to MT7620A"
     }
   },
   "limits": [
     "Linux v7 has not booted on hardware; downstream results are separate",
-    "MT7620N, older ECOs and other MediaTek runtime untested",
+    "Older ECO-specific coverage and other MediaTek runtime remain untested",
     "Short paced tests do not establish line rate or soak reliability",
     "Busy-DMA failure and long scheduler stalls not injected",
     "New netdevice/tagger API and standard-statistics uAPI require subsystem review"

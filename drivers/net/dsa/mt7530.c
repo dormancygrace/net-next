@@ -84,22 +84,42 @@ static const struct mt7620_mib_desc mt7620_mib[] = {
 	{ 0x30, 0, U16_MAX, "rx_filtered" },
 };
 
+/* Packet counters wrap in about 44 ms on the gigabit CPU port and
+ * 440 ms on 100BASE-T ports. Keep the CPU poll at 20 ms and sample
+ * the remaining ports every tenth tick, as in the OpenWrt driver.
+ */
+#define MT7620_MIB_PORT_INTERVALS 10
+
 static void mt7620_mib_update(struct mt7530_priv *priv)
 {
-	u32 val, delta;
+	u32 raw[MT7530_NUM_PORTS][ARRAY_SIZE(mt7620_mib)];
+	unsigned long ports = BIT(6);
 	int port, i;
 
-	spin_lock_bh(&priv->stats_lock);
-	for (port = 0; port < MT7530_NUM_PORTS; port++) {
+	if (++priv->mib_port_intervals == MT7620_MIB_PORT_INTERVALS) {
+		ports = GENMASK(MT7530_NUM_PORTS - 1, 0);
+		priv->mib_port_intervals = 0;
+	}
+
+	for_each_set_bit(port, &ports, MT7530_NUM_PORTS) {
 		for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++) {
 			const struct mt7620_mib_desc *m = &mt7620_mib[i];
+			u32 val;
 
 			regmap_read(priv->regmap, 0x4000 + port * 0x100 +
 				    m->offset, &val);
-			val = (val >> m->shift) & m->mask;
-			delta = (val - priv->ports[port].mib[i].last) & m->mask;
-			priv->ports[port].mib[i].value += delta;
-			priv->ports[port].mib[i].last = val;
+			raw[port][i] = (val >> m->shift) & m->mask;
+		}
+	}
+
+	spin_lock_bh(&priv->stats_lock);
+	for_each_set_bit(port, &ports, MT7530_NUM_PORTS) {
+		for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++) {
+			struct mt7530_mib_counter *counter = &priv->ports[port].mib[i];
+
+			counter->value += (raw[port][i] - counter->last) &
+					  mt7620_mib[i].mask;
+			counter->last = raw[port][i];
 		}
 	}
 	spin_unlock_bh(&priv->stats_lock);

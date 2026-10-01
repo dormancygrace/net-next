@@ -3674,6 +3674,8 @@ static void mtk_poll_controller(struct net_device *dev)
 
 static void mtk_set_mcr_max_rx(struct mtk_mac *mac, u32 val);
 
+static void mtk_mt7620_vlan_restore(struct mtk_eth *eth);
+
 static int mtk_start_dma(struct mtk_eth *eth)
 {
 	u32 val, rx_2b_offset = (NET_IP_ALIGN == 2) ? MTK_RX_2B_OFFSET : 0;
@@ -3705,6 +3707,8 @@ static int mtk_start_dma(struct mtk_eth *eth)
 			MTK_RX_BT_32DWORDS | MTK_MULTI_EN,
 			reg_map->pdma.glo_cfg);
 	} else if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		/* A forced FE reset during close clears the CDMA table. */
+		mtk_mt7620_vlan_restore(eth);
 		mtk_set_mcr_max_rx(eth->mac[0],
 				   eth->netdev[0]->mtu + MTK_RX_ETH_HLEN);
 		mtk_m32(eth, 0, MT7620_CDMA_CSUM_EN, MT7620_CDMA_CSG_CFG);

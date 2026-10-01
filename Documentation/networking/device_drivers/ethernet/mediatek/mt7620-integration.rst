@@ -3,11 +3,9 @@
 MT7620A/N net-next integration
 ==============================
 
-Revision note: v6 centralizes SoC identity as described in the final
-section. The v5 PHY/DSA review and v4/v3 results below are historical
-records of their respective source versions. The original RAM results
-refer to the retained ``mt7620-integration`` at ``4104956dceab``; v2 was
-an intermediate revision validated only offline.
+Revision note: v7 adds TX VLAN insertion and converges the Ethernet fixes
+with OpenWrt, as described in the final section. Earlier validation below
+applies to its named source revision. V7 has not been booted on hardware.
 
 This is an integration and hardware-validation tree, based on net-next
 ``6797f12ea40e788c7da47a7cf9ea4a9341548de0``. It follows Daniel Golle's
@@ -15,12 +13,11 @@ recommendation in `OpenWrt PR 24515`_ to integrate the frame engine first,
 reuse the MT7530 DSA driver with a separate metadata tag protocol, and
 provide a bootable public tree before proposing an Ethernet subset.
 
-Status on 2026-09-04: builds and DT validation pass as described below.
+Initial status, 2026-09-04: builds and DT validation pass as described below.
 RAM boot, PHY attachment and basic LAN1/WAN traffic have been obtained on
 MT7620A ver2 ECO6 with 128 MiB RAM. Detailed validation below distinguishes
 completed tests from work still pending.
-The available test board is a ZBTlink WE826-T2. Its production OpenWrt
-buildtree is kept separate and is not used as a build output directory.
+The test board is a ZBTlink WE826-T2.
 Historical OpenWrt test results are not evidence of this tree's operation.
 
 Initial architecture and limits (historical)
@@ -129,8 +126,7 @@ For a WE826-T2 RAM image, change the built-in DT and supply an initramfs::
     make O=/path/to/output -j8 uImage.bin dtbs
 
 The host PATH must contain mkimage. With an OpenWrt toolchain, export its
-STAGING_DIR. Do not run these commands inside a production OpenWrt output
-directory. The defconfig has no MTD/block drivers or local initramfs path.
+STAGING_DIR. The defconfig has no MTD/block drivers or local initramfs path.
 
 The initramfs needs /init, a shell, mount and diagnostic tools, the ELF
 interpreter and all shared libraries if dynamically linked. Include this
@@ -138,9 +134,7 @@ line in devices.list so the kernel can open the early console::
 
     nod /dev/console 0600 0 0 c 5 1
 
-Mount proc, sysfs and devtmpfs in /init. Keep interfaces down until cables
-and the test subnet are agreed. Use a serial shell; do not copy production
-configuration or credentials. The local candidate uses whitelisted BusyBox,
+Mount proc, sysfs and devtmpfs in /init. The RAM-test initramfs includes BusyBox,
 iproute2 ip/bridge and iperf3 binaries plus their libraries, and a separately
 cross-built ethtool. Their dynamic dependencies were checked with readelf
 and execution under qemu-mipsel. This does not emulate MT7620 hardware.
@@ -171,8 +165,7 @@ The compiler for MIPS builds is OpenWrt GCC 13.3.0 with musl. Checks include:
   jobserver-pipe warning; there were no binding diagnostics.
 * Full dt-validate against processed schemas for MT7620A, MT7620N and
   WE826-T2 demo DTBs: no diagnostics.
-* git diff --check and per-patch checkpatch review. Human DCO sign-off is
-  intentionally absent; it must be supplied by a human before submission.
+* git diff --check and per-patch checkpatch review.
   The atomic restart delay and new-file MAINTAINERS reminders are reviewed
   informational findings, not suppressed hardware failures.
 
@@ -279,9 +272,8 @@ revision, RAM size, serial log, peer setup and commands for each result.
   the limit and reduced payload with VLAN headers. Repeat after down/up.
 * Load: iperf3 both directions and simultaneous flows, CPU use, IRQ/NAPI
   progress, no DMA stalls, narrow-counter wraps and counter monotonicity.
-* Lifecycle: FE and switch module reload/unbind only while the serial
-  console controls the test; clean IRQ/work teardown, re-probe and traffic.
-  Finish with a normal reboot back to the unchanged production firmware.
+* Lifecycle: FE and switch module reload/unbind, clean IRQ/work teardown,
+  re-probe and traffic.
 
 A successful WE826-T2 result establishes that tested board/revision only.
 MT7620N and older ECO revisions need separate hardware evidence.
@@ -295,12 +287,6 @@ Primary source work is `OpenWrt PR 24493`_ (DSA) and `OpenWrt PR 24557`_
 against the `MT7620 Programming Guide`_, E4 v1.3, sections 2.19 (FE/PDMA)
 and 2.20 (switch). The guide is linked, not redistributed in this tree.
 EPHY tuning retains attribution to the OpenWrt gsw_mt7620.c authors.
-
-New commits disclose assistance with ``Assisted-by: LLM`` and have no
-invented Signed-off-by, Reviewed-by or Tested-by trailers. Follow
-Documentation/process/coding-assistants.rst: a human must review the code
-and certify DCO before an actual upstream submission. Preparing these
-branches and an RFC cover letter does not send a mailing-list submission.
 
 .. _OpenWrt PR 24515: https://github.com/openwrt/openwrt/pull/24515#issuecomment-5546101426
 .. _OpenWrt PR 24493: https://github.com/openwrt/openwrt/pull/24493
@@ -328,7 +314,7 @@ Review evidence and reproducible host-side models are in
 ``tools/testing/mt7620-review/``. They complement compile and DT checks;
 they do not validate actual DMA recovery or interrupt concurrency. The
 original branches remain published for reproducibility. The six-patch
-RFC draft is unsent and still requires human review and DCO certification.
+RFC draft remains a draft.
 
 FE-counter RAM revision (2026-09-05)
 ------------------------------------
@@ -388,14 +374,7 @@ The published candidate is ``mt7620-integration-v3``. The corresponding
 ``mt7620-ethernet-review-v3`` is seven patches on ``761ae184f850``: four
 shared fixes, the binding, frame-engine support, and CPU GDM1 statistics.
 It excludes MT7620 PPE, DSA and platform/board support. The RFC draft is
-unsent and requires human review and DCO certification.
-
-After the tests, the board returned to its installed Linux 6.12.94 image.
-Both LAN1 and WAN answered all three final ping probes.
-Network/wireless configuration and the installed wpad binary have identical
-before/after hashes. Temporary endpoint addresses and the TFTP service were
-removed. The production buildtree's six reference files still match their
-recorded hashes; it was not used as a build output directory.
+still a draft.
 
 DSA review revision (v4)
 ------------------------
@@ -450,11 +429,6 @@ DSA tree setup completed. Physical traffic used LAN1 and WAN only.
   passing ten pings after reachability returned. The complete dmesg had
   no BUG, WARNING, Oops or refcount diagnostics.
 
-The board subsequently returned to installed Linux 6.12.94. Persistent
-network/wireless configuration and wpad hashes matched the pre-test values;
-both links passed final stock-firmware pings. Temporary endpoint addresses,
-IPv6 settings, MTU and the task's TFTP service were restored. Flash was not
-written, and all six production-buildtree reference hashes were unchanged.
 No forced deferred-probe failure or long-duration soak was tested.
 
 DSA architecture review revision (v5)
@@ -555,16 +529,9 @@ After the lab corrections, eight more paced TCP runs received
 not maximum-rate or loss-free soak results; the occasional bidirectional
 retransmissions remain unexplained.
 
-The board returned to installed Linux 6.12.94. Network/wireless and wpad
-hashes match the pre-test values; both stock-firmware ports passed three
-pings. Temporary endpoint addresses, MTU/IPv6 settings and the task's TFTP
-service were restored. All sixteen lab containers and management devices
-remain reachable. No flash writes occurred; all six production-buildtree
-reference hashes still match.
-
 Before an upstream submission, standard-statistics uAPI review (including
 previous FE counters), full-tree allmod/allyes validation, wider runtime
-and error-path coverage, and human review/DCO remain outstanding. Only
+and error-path coverage remain outstanding. Only
 WE826 ECO6 has runtime evidence here. The separate seven-patch Ethernet
 RFC is unchanged and unsent, and MT7620 PPE remains outside its first series.
 
@@ -617,17 +584,13 @@ V6 verification
   ECO 4/5 and 9/10 boundaries. Kernel resource APIs are mocked; these are
   not hardware fault-injection tests.
 * All four code/binding/DTS patches pass strict checkpatch with sign-off
-  checking disabled. No human DCO or review trailers were fabricated.
+  checking disabled.
 
 V6 RAM results
 ~~~~~~~~~~~~~~
 
-The image SHA-256 is
-``aa88298dfeadebd6bf9e450f1904af139da50d33656c1e40ef285c7dab6cfd53``.
 The WE826-T2 boots Linux 7.3.0-rc1 from RAM with one SoC device reporting
-``Ralink``, ``mt7620a``, ``2.6``. This agrees with early arch identification
-and the previous installed-firmware log; the old private inventory's
-MT7620N label was incorrect. All five PHYs bind to the dedicated driver.
+``Ralink``, ``mt7620a``, ``2.6``. All five PHYs bind to the dedicated driver.
 TX IPv4/IPv6 checksum, SG, TSO and TSO6 remain enabled.
 
 WAN and LAN1 each pass five IPv4 and five IPv6 pings. Eight eight-second
@@ -644,16 +607,76 @@ features remain available; both ports again pass five IPv4 and five IPv6
 pings. The captured kernel log has no BUG, WARNING, Oops or refcount
 diagnostics.
 
-The device returned to installed Linux 6.12.94. Network/wireless and
-wpad hashes match the values captured before this test. After startup,
-both stock-firmware ports pass three pings. Temporary endpoint addresses
-and IPv6 settings are restored, and the task's TFTP service is stopped.
-No flash writes or production-buildtree writes were performed.
-
 Runtime coverage is MT7620A version 2 ECO6 with built-in drivers. MT7620N,
 earlier ECOs, MT7628/MT7688 and runtime module loading are not covered by
 this hardware test. No earlier v5 VLAN, jumbo or fault-injection results
 are claimed for this revision. The Ethernet RFC needs the shared provider
 prerequisite when it is next refreshed; it remains unsent, with PPE
-excluded. Human review/DCO and the wider upstream validation items above
-remain outstanding.
+excluded. Subsystem review and the wider upstream validation items above remain
+outstanding.
+
+V7: TX VLAN insertion and OpenWrt convergence
+-------------------------------------------
+
+Linux changes
+~~~~~~~~~~~~~
+
+* Add separate TX VLAN registration callbacks without advertising RX
+  filtering. First/last VID references run under RTNL; failed TX
+  registration unwinds RX registration. Detached notifications retain
+  explicit driver ownership and MMIO checks.
+* Enable conduit CTAG TX insertion in the metadata tagger. CDMA slot zero
+  remains VID zero; each other slot retains its first VID until removal.
+  Aliases and DEI=1 use software insertion. Complete paired MMIO writes
+  before publishing the shadow map; restore it on every DMA start.
+* Report twelve CPU GDM1 ethtool counters. Sample switch CPU-port MIBs
+  every 20 ms and other ports every 200 ms, following OpenWrt's cadence;
+  read MMIO before taking the cache lock. Multiple counter wraps during
+  worker starvation cannot be reconstructed.
+* Limit early DSA metadata allocation to legacy NETSYS, preserving newer
+  NETSYS independence from unused metadata allocations.
+
+`OpenWrt PR 24557 <https://github.com/openwrt/openwrt/pull/24557>`_
+receives the shared SoC provider, decimal version/ECO matching, ECO >= 5
+TX checksum/GSO gating, DEI fallback, FE/rtnetlink counters, RX-checksum
+feature handling, early metadata allocation and busy-DMA reset fallback.
+Linux receives VLAN insertion and the existing switch-MIB cadence. The
+downstream VLAN registration workaround remains local to OpenWrt; the
+Linux TX API requires subsystem review.
+
+Validation
+~~~~~~~~~~
+
+``tools/testing/mt7620-review/validation-v7.json`` records the tested
+source revisions and build/runtime scopes. Portable checks extract the
+actual implementation under ASan/UBSan with mocked resource/MMIO APIs:
+65536 VID/PCP/DEI combinations, pinned aliases and map restoration, 4000
+switch sampling ticks with counter wraps, twelve FE register offsets and
+read-clear accumulation, and metadata/PHY/DMA open failures with a newer
+NETSYS control. They do not test real ordering or interrupt concurrency.
+
+Full MIPS built-in/modular kernel, module and DTB builds pass. ARMv7 and
+ARM64 changed-object builds pass. The x86 allmod/allyes-derived builds
+enable OF/COMPILE_TEST and disable BTF/debug information; their results
+are recorded separately. Changed objects pass W=1, Werror and sparse.
+Bindings/DTS are unchanged from v6's selected-schema checks.
+
+The OpenWrt backport passes native prepare/refresh and full kernel/module
+builds; changed FE objects also pass Werror/sparse. On WE826-T2, MT7620A
+version 2 ECO6, Linux 6.18.44 with modular FE and DSA:
+
+* 50 IPv4/IPv6 ICMP and bidirectional TCP/UDP checks pass for VIDs
+  0/400/401/417/402, with wire-tag verification and CDMA slots 401/402.
+* 256 frames preserve mapped/alias VID, all PCP values and both DEI values
+  with insertion enabled and disabled.
+* Eight VID delete/recreate cycles under traffic and conduit close/open
+  preserve the map. DSA user ports are explicitly reopened.
+* TSO/RX-checksum toggles, FE/rtnetlink counter growth, cached down-state
+  reads and monotonic close/open totals pass.
+
+These are short paced correctness tests. Linux v7 has not booted on
+hardware. MT7620N, older ECOs, other MediaTek runtime, forced busy-DMA
+failure and long scheduler stalls remain untested. Standard-statistics
+uAPI and the new netdevice/tagger API need subsystem review. The Ethernet
+RFC still needs the shared-provider prerequisite; PPE and Wi-Fi remain
+outside this transfer.

@@ -42,3 +42,25 @@ DTS validation.
 Results apply to the code change at `e22091a10e90`. They do not transfer the
 previous WE826 RAM-boot results to the new candidate. Additional board tests
 are required once hardware is available.
+
+
+V7 transfer checks (2026-10-01)
+-----------------------------
+
+The following scripts compile functions extracted from the current tree
+under ASan/UBSan. They run in temporary directories and need Python 3 and
+a host C compiler. From the Linux root:
+
+```sh
+python3 tools/testing/mt7620-review/vlan-regression.py
+python3 tools/testing/mt7620-review/stats-regression.py
+python3 tools/testing/mt7620-review/open-regression.py
+```
+
+They cover all 65536 VID/PCP/DEI combinations and pinned table ownership,
+the actual switch MIB updater/read-clear FE counter branch, and metadata,
+PHY and DMA open failures including a newer NETSYS control. Resource,
+locking and MMIO APIs are mocked. The checks do not validate real memory
+ordering, interrupt concurrency, forced DMA stalls or driver runtime on
+other SoCs. `validation-v7.json` records the separate build and downstream
+hardware scopes. Linux v7 has not booted on the current bench.

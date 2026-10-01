@@ -1,0 +1,85 @@
+{
+  "linux_tested_source_commit": "51f458be717fcf38c515f502836e76d5c96149b5",
+  "linux_publication_code_commit": "260eeb2d86fe37eef698e09d1dd1e1412fcbe967",
+  "linux_code_tree_identical": true,
+  "linux_builds": [
+    {
+      "name": "mips-builtin",
+      "result": "pass",
+      "coverage": "full vmlinux/modules/dtbs and changed Werror/sparse objects"
+    },
+    {
+      "name": "mips-modules",
+      "result": "pass",
+      "coverage": "full vmlinux/modules/dtbs and changed Werror/sparse objects"
+    },
+    {
+      "name": "arm",
+      "result": "pass",
+      "coverage": "changed Werror/sparse objects"
+    },
+    {
+      "name": "arm64",
+      "result": "pass",
+      "coverage": "changed Werror/sparse objects"
+    },
+    {
+      "name": "x86-allmod",
+      "result": "pass",
+      "coverage": "full vmlinux/modules and changed Werror/sparse objects"
+    },
+    {
+      "name": "x86-allyes",
+      "changed_Werror_sparse_objects": "pass",
+      "full_vmlinux_modules": "pending"
+    }
+  ],
+  "x86_config_changes": [
+    "OF and COMPILE_TEST enabled",
+    "BTF and debug information disabled"
+  ],
+  "host_checks": {
+    "sanitizers": [
+      "ASan",
+      "UBSan"
+    ],
+    "vlan_vid_pcp_dei_cases": 65536,
+    "switch_sampling_ticks": 4000,
+    "fe_counter_registers": 12,
+    "metadata_phy_dma_open_failure_controls": "pass",
+    "newer_NETSYS_control": "pass",
+    "method": "Extracted implementations with mocked kernel/resource/MMIO APIs"
+  },
+  "openwrt": {
+    "pr": "https://github.com/openwrt/openwrt/pull/24557",
+    "published_commit": "4017ad917631d322a6325e571b15f21279dcf365",
+    "tested_source_commit": "ea6788575d402f83ae28965d235eb4dccd334bfa",
+    "source_unchanged_by_DCO_and_header_updates": true,
+    "native_kernel_modules": "pass",
+    "native_prepare_refresh": "pass, idempotent",
+    "changed_FE_Werror_sparse": "pass",
+    "hardware": {
+      "board": "WE826-T2",
+      "soc": "MT7620A",
+      "silicon_version": 2,
+      "eco": 6,
+      "kernel": "6.18.44",
+      "FE_DSA": "modules",
+      "ipv4_ipv6_vlan_functional_checks": 50,
+      "wire_vid_pcp_groups": 20,
+      "mapped_alias_all_pcp_dei_frames": 256,
+      "tag_mismatches": 0,
+      "vlan_delete_recreate_cycles": 8,
+      "conduit_cycle": "pass with DSA user ports reopened",
+      "counter_feature_cases": 6,
+      "cached_down_state_and_monotonic_close_open_totals": "pass"
+    }
+  },
+  "limits": [
+    "Linux v7 has not booted on hardware; downstream results are separate",
+    "MT7620N, older ECOs and other MediaTek runtime untested",
+    "Short paced tests do not establish line rate or soak reliability",
+    "Busy-DMA failure and long scheduler stalls not injected",
+    "New netdevice/tagger API and standard-statistics uAPI require subsystem review"
+  ]
+}

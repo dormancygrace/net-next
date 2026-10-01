@@ -954,6 +954,7 @@ struct mt753x_info {
  * @stats_lock:		Protects cached per-port stats from concurrent access
  * @stats_work:		Delayed work for polling MIB counters on MDIO switches
  * @stats_last:		Jiffies timestamp of last MIB counter poll
+ * @mib_port_intervals:	MT7620 CPU polls since the last full-port sample
  * @sysc:		System controller containing the integrated switch mode
  * @rst_ephy:		Reset control for the integrated PHYs
  * @internal_mdio:	MDIO bus providing access to the integrated PHYs
@@ -988,6 +989,7 @@ struct mt7530_priv {
 	spinlock_t stats_lock; /* protects cached stats counters */
 	struct delayed_work stats_work;
 	unsigned long stats_last;
+	u8 mib_port_intervals;
 	struct regmap *sysc;
 	struct reset_control *rst_ephy;
 	struct mii_bus *internal_mdio;

@@ -31,7 +31,7 @@
     {
       "name": "x86-allyes",
       "changed_Werror_sparse_objects": "pass",
-      "full_vmlinux_modules": "pending"
+      "full_vmlinux_modules": "pass"
     }
   ],
   "x86_config_changes": [

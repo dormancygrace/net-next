@@ -1208,6 +1208,20 @@ struct netdev_net_notifier {
  *	If device supports VLAN filtering this function is called when a
  *	VLAN id is unregistered.
  *
+ * int (*ndo_vlan_tx_add_vid)(struct net_device *dev, __be16 proto, u16 vid);
+ *	Notify a driver of the first registration of a VLAN for TX insertion.
+ *	Called under RTNL, independently of RX VLAN filtering. Return zero
+ *	when software insertion is needed for an unsupported VID. Drivers
+ *	with limited insertion maps must reject such packets in
+ *	ndo_features_check(). A failed add must leave no new resource owned.
+ *	The device may be detached; avoid hardware access in that case.
+ *
+ * void (*ndo_vlan_tx_kill_vid)(struct net_device *dev, __be16 proto, u16 vid);
+ *	Notify a driver of the last VLAN registration being removed, under
+ *	RTNL. The driver must preserve mappings needed by pending DMA or
+ *	packets which already passed ndo_features_check().
+ *	The device may be detached; avoid hardware access in that case.
+ *
  * void (*ndo_poll_controller)(struct net_device *dev);
  *
  *	SR-IOV management functions.
@@ -1509,6 +1523,10 @@ struct net_device_ops {
 						       __be16 proto, u16 vid);
 	int			(*ndo_vlan_rx_kill_vid)(struct net_device *dev,
 						        __be16 proto, u16 vid);
+	int			(*ndo_vlan_tx_add_vid)(struct net_device *dev,
+						       __be16 proto, u16 vid);
+	void			(*ndo_vlan_tx_kill_vid)(struct net_device *dev,
+							__be16 proto, u16 vid);
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	void                    (*ndo_poll_controller)(struct net_device *dev);
 	int			(*ndo_netpoll_setup)(struct net_device *dev);

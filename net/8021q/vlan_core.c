@@ -224,6 +224,19 @@ static int vlan_kill_rx_filter_info(struct net_device *dev, __be16 proto, u16 vi
 		return -ENODEV;
 }
 
+static int vlan_add_tx_info(struct net_device *dev, __be16 proto, u16 vid)
+{
+	if (!dev->netdev_ops->ndo_vlan_tx_add_vid)
+		return 0;
+	return dev->netdev_ops->ndo_vlan_tx_add_vid(dev, proto, vid);
+}
+
+static void vlan_kill_tx_info(struct net_device *dev, __be16 proto, u16 vid)
+{
+	if (dev->netdev_ops->ndo_vlan_tx_kill_vid)
+		dev->netdev_ops->ndo_vlan_tx_kill_vid(dev, proto, vid);
+}
+
 int vlan_for_each(struct net_device *dev,
 		  int (*action)(struct net_device *dev, int vid, void *arg),
 		  void *arg)
@@ -309,6 +322,13 @@ static int __vlan_vid_add(struct vlan_info *vlan_info, __be16 proto, u16 vid,
 		return err;
 	}
 
+	err = vlan_add_tx_info(dev, proto, vid);
+	if (err) {
+		vlan_kill_rx_filter_info(dev, proto, vid);
+		kfree(vid_info);
+		return err;
+	}
+
 	list_add(&vid_info->list, &vlan_info->vid_list);
 	vlan_info->nr_vids++;
 	*pvid_info = vid_info;
@@ -359,6 +379,7 @@ static void __vlan_vid_del(struct vlan_info *vlan_info,
 	u16 vid = vid_info->vid;
 	int err;
 
+	vlan_kill_tx_info(dev, proto, vid);
 	err = vlan_kill_rx_filter_info(dev, proto, vid);
 	if (err && dev->reg_state != NETREG_UNREGISTERING)
 		netdev_warn(dev, "failed to kill vid %04x/%d\n", proto, vid);

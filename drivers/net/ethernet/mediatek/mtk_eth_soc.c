@@ -3861,7 +3861,8 @@ static int mtk_open(struct net_device *dev)
 
 	ppe_num = eth->soc->ppe_num;
 
-	if ((mtk_uses_dsa(dev) || mtk_uses_mtk_oob(dev)) && !eth->prog) {
+	if (!mtk_is_netsys_v2_or_greater(eth) &&
+	    (mtk_uses_dsa(dev) || mtk_uses_mtk_oob(dev)) && !eth->prog) {
 		err = mtk_dsa_metadata_init(eth);
 		if (err)
 			return err;

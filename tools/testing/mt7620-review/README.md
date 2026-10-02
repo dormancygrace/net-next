@@ -64,3 +64,24 @@ locking and MMIO APIs are mocked. The checks do not validate real memory
 ordering, interrupt concurrency, forced DMA stalls or driver runtime on
 other SoCs. `validation-v7.json` records the separate build and downstream
 hardware scopes. Linux v7 has not booted on the current bench.
+
+
+### Delay-interrupt reset recovery follow-up
+
+MT7620 FE reset during a busy-DMA close clears the PDMA delay-interrupt
+register. Reopen now restores both current RX/TX moderation profiles
+before DMA starts. The QDMA and MT7628 branches retain their behavior.
+
+The source change passes FE object builds with W=1/Werror and sparse for
+MIPS built-in/module configurations, ARM, ARM64, and the recorded x86
+allmodconfig/allyesconfig configurations. Both MIPS configurations also
+pass complete vmlinux/module/DTB builds. Sparse warnings match the
+preceding source revision under the same commands.
+
+An ASan/UBSan fixture extracts the real stop/start and DIM functions and
+models a busy-DMA FE reset. It checks 25 RX/TX profile combinations,
+ordinary close, DMA-initialization failure and non-MT7620 controls.
+MMIO, reset and resource APIs are mocked; the failure has not been
+injected on hardware. The earlier full x86 builds and downstream
+hardware results above predate this source change. Linux hardware
+validation remains pending.

@@ -17241,6 +17241,7 @@ F:	drivers/net/dsa/mt7530-mdio.c
 F:	drivers/net/dsa/mt7530-mmio.c
 F:	drivers/net/dsa/mt7530.*
 F:	net/dsa/tag_mtk.c
+F:	net/dsa/tag_mtk_oob.c
 
 MEDIATEK T7XX 5G WWAN MODEM DRIVER
 M:	Chandrashekar Devegowda <chandrashekar.devegowda@intel.com>

@@ -35,6 +35,7 @@ choice
 
 	config SOC_MT7620
 		bool "MT7620/8"
+		select CLK_MTMIPS
 		select CPU_MIPSR2_IRQ_VI
 		select HAVE_PCI
 		select SOC_BUS

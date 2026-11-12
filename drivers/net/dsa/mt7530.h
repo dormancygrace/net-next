@@ -861,6 +861,7 @@ struct mt753x_pcs {
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
  * @setup_tc:		Optional hardware traffic control operations
+ * @stats_ops:		Counter layout, readout and polling operations
  * @setup_mdio:		Register the internal MDIO bus and its interrupt source
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
@@ -880,6 +881,7 @@ struct mt753x_info {
 	u8 tag_len;
 	u8 cpu_vlan_egress;
 
+	const struct mt7530_stats_ops *stats_ops;
 	const struct phylink_mac_ops *phylink_mac_ops;
 	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;

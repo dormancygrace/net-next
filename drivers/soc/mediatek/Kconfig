@@ -2,6 +2,17 @@
 #
 # MediaTek SoC drivers
 #
+config MT7620_SOCINFO
+	bool "MediaTek MT7620 SoC information" if COMPILE_TEST
+	depends on OF && HAS_IOMEM
+	select MFD_SYSCON
+	select SOC_BUS
+	help
+	  Register the MT7620 model and silicon revision on the SoC bus.
+	  Drivers can use soc_device_match() to select package-specific
+	  settings and revision-dependent features. This is built in so
+	  the information is available before device drivers are probed.
+
 menu "MediaTek SoC drivers"
 	depends on ARCH_MEDIATEK || COMPILE_TEST
 

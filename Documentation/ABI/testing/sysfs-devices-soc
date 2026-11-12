@@ -77,6 +77,9 @@ Description:
 		Read-only attribute supported by most SoCs. Contains the SoC's
 		manufacturing revision number.
 
+		On MediaTek MT7620, the format is "version.eco", with both
+		fields in decimal (for example, "2.6" for version 2, ECO 6).
+
 What:		/sys/devices/socX/process
 Date:		January 2012
 contact:	Lee Jones <lee@kernel.org>

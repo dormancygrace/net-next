@@ -4505,7 +4505,13 @@ static int mtk_free_dev(struct mtk_eth *eth)
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
 		if (!eth->netdev[i])
 			continue;
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
+			unregister_netdevice_notifier(&eth->mac[i]->device_notifier);
+		if (eth->mac[i]->phylink)
+			phylink_destroy(eth->mac[i]->phylink);
 		free_netdev(eth->netdev[i]);
+		eth->netdev[i] = NULL;
+		eth->mac[i] = NULL;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(eth->dsa_meta); i++) {
@@ -4522,17 +4528,10 @@ static int mtk_unreg_dev(struct mtk_eth *eth)
 	int i;
 
 	for (i = 0; i < MTK_MAX_DEVS; i++) {
-		struct mtk_mac *mac;
 		if (!eth->netdev[i])
 			continue;
-		mac = netdev_priv(eth->netdev[i]);
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_QDMA))
-			unregister_netdevice_notifier(&mac->device_notifier);
-
-		if (eth->netdev[i]->reg_state != NETREG_REGISTERED)
-			continue;
-
-		unregister_netdev(eth->netdev[i]);
+		if (eth->netdev[i]->reg_state == NETREG_REGISTERED)
+			unregister_netdev(eth->netdev[i]);
 	}
 
 	return 0;
@@ -4887,7 +4886,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 	err = of_get_ethdev_address(mac->of_node, eth->netdev[id]);
 	if (err == -EPROBE_DEFER)
-		return err;
+		goto free_netdev;
 
 	if (err) {
 		/* If the mac address is invalid, use random mac address */
@@ -5048,6 +5047,8 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 
 free_netdev:
 	free_netdev(eth->netdev[id]);
+	eth->netdev[id] = NULL;
+	eth->mac[id] = NULL;
 	return err;
 }
 
@@ -5310,7 +5311,7 @@ static int mtk_probe(struct platform_device *pdev)
 		err = mtk_add_mac(eth, mac_np);
 		if (err) {
 			of_node_put(mac_np);
-			goto err_deinit_hw;
+			goto err_free_dev;
 		}
 	}
 
@@ -5413,7 +5414,6 @@ err_deinit_ppe:
 	mtk_mdio_cleanup(eth);
 err_free_dev:
 	mtk_free_dev(eth);
-err_deinit_hw:
 	mtk_hw_deinit(eth);
 err_wed_exit:
 	mtk_wed_exit();

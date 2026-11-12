@@ -1432,6 +1432,7 @@ static void mtk_tx_unmap(struct mtk_eth *eth, struct mtk_tx_buf *tx_buf,
 					       dma_unmap_addr(tx_buf, dma_addr0),
 					       dma_unmap_len(tx_buf, dma_len0),
 					       DMA_TO_DEVICE);
+			dma_unmap_len_set(tx_buf, dma_len0, 0);
 		}
 
 		if (dma_unmap_len(tx_buf, dma_len1)) {
@@ -1439,6 +1440,7 @@ static void mtk_tx_unmap(struct mtk_eth *eth, struct mtk_tx_buf *tx_buf,
 				       dma_unmap_addr(tx_buf, dma_addr1),
 				       dma_unmap_len(tx_buf, dma_len1),
 				       DMA_TO_DEVICE);
+			dma_unmap_len_set(tx_buf, dma_len1, 0);
 		}
 	}
 

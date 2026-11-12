@@ -124,6 +124,8 @@ struct dsa_device_ops {
 	 * its RX filter.
 	 */
 	bool promisc_on_conduit;
+	/* Tagging preserves a VLAN header inserted by the conduit. */
+	bool hw_vlan_tx;
 };
 
 struct dsa_lag {

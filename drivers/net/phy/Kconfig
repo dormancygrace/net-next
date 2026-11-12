@@ -366,6 +366,16 @@ config MOTORCOMM_PHY
 	  Currently supports YT85xx Gigabit Ethernet PHYs, YT861x PHYs
 	  integrated in YT921x switches, and YT8821 2.5Gbps PHYs.
 
+config MT7620_EPHY
+	tristate "MediaTek MT7620 Fast Ethernet PHYs"
+	depends on SOC_MT7620 || COMPILE_TEST
+	select PHY_PACKAGE
+	help
+	  Support for the five integrated Fast Ethernet PHYs in MT7620.
+	  The driver configures shared analog registers and per-port tuning,
+	  selected by the SoC package reported by the MT7620 SoC information
+	  driver.
+
 config NATIONAL_PHY
 	tristate "National Semiconductor PHYs"
 	help

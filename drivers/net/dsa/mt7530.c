@@ -2329,7 +2329,7 @@ mt7530_free_mdio_irq(struct mt7530_priv *priv)
 }
 
 static int
-mt7530_setup_mdio(struct mt7530_priv *priv)
+mt7530_register_mdio(struct mt7530_priv *priv)
 {
 	struct device_node *mnp, *np = priv->dev->of_node;
 	struct dsa_switch *ds = priv->ds;
@@ -2375,6 +2375,17 @@ mt7530_setup_mdio(struct mt7530_priv *priv)
 out:
 	of_node_put(mnp);
 	return ret;
+}
+
+static int mt7530_setup_mdio(struct mt7530_priv *priv)
+{
+	int ret;
+
+	ret = mt7530_setup_irq(priv);
+	if (ret)
+		return ret;
+
+	return mt7530_register_mdio(priv);
 }
 
 static int
@@ -3203,11 +3214,7 @@ mt753x_setup(struct dsa_switch *ds)
 	if (ret)
 		return ret;
 
-	ret = mt7530_setup_irq(priv);
-	if (ret)
-		return ret;
-
-	ret = mt7530_setup_mdio(priv);
+	ret = priv->info->setup_mdio(priv);
 	if (ret)
 		return ret;
 
@@ -3361,7 +3368,7 @@ static int mt753x_tc_setup_qdisc_tbf(struct dsa_switch *ds, int port,
 	return 0;
 }
 
-static int mt753x_setup_tc(struct dsa_switch *ds, int port,
+static int mt7530_setup_tc(struct dsa_switch *ds, int port,
 			   enum tc_setup_type type, void *type_data)
 {
 	switch (type) {
@@ -3370,6 +3377,14 @@ static int mt753x_setup_tc(struct dsa_switch *ds, int port,
 	default:
 		return -EOPNOTSUPP;
 	}
+}
+
+static int mt753x_setup_tc(struct dsa_switch *ds, int port,
+			   enum tc_setup_type type, void *type_data)
+{
+	struct mt7530_priv *priv = ds->priv;
+
+	return priv->info->setup_tc(ds, port, type, type_data);
 }
 
 static int mt7988_setup(struct dsa_switch *ds)
@@ -3453,6 +3468,9 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 const struct mt753x_info mt753x_table[] = {
 	[ID_MT7621] = {
 		.id = ID_MT7621,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3470,6 +3488,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7530] = {
 		.id = ID_MT7530,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3487,6 +3508,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7531] = {
 		.id = ID_MT7531,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
@@ -3505,6 +3529,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_MT7988] = {
 		.id = ID_MT7988,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
@@ -3522,6 +3549,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7581] = {
 		.id = ID_EN7581,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
@@ -3539,6 +3569,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_AN7583] = {
 		.id = ID_AN7583,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
@@ -3556,6 +3589,9 @@ const struct mt753x_info mt753x_table[] = {
 	},
 	[ID_EN7528] = {
 		.id = ID_EN7528,
+		.setup_tc = mt7530_setup_tc,
+		.setup_mdio = mt7530_setup_mdio,
+		.phylink_mac_ops = &mt753x_phylink_mac_ops,
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
@@ -3596,7 +3632,7 @@ mt7530_probe_common(struct mt7530_priv *priv)
 	priv->dev = dev;
 	priv->ds->priv = priv;
 	priv->ds->ops = &mt7530_switch_ops;
-	priv->ds->phylink_mac_ops = &mt753x_phylink_mac_ops;
+	priv->ds->phylink_mac_ops = priv->info->phylink_mac_ops;
 	mutex_init(&priv->reg_mutex);
 	spin_lock_init(&priv->stats_lock);
 	INIT_DELAYED_WORK(&priv->stats_work, mt7530_stats_poll);

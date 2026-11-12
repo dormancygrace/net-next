@@ -2749,6 +2749,7 @@ static int mtk_tx_alloc(struct mtk_eth *eth)
 		if (mtk_is_netsys_v2_or_greater(eth))
 			mtk_w32(eth, val, soc->reg_map->qdma.tx_sch_rate + 4);
 	} else {
+		ring->cpu_idx = 0;
 		mtk_w32(eth, ring->phys_pdma, MT7628_TX_BASE_PTR0);
 		mtk_w32(eth, ring_size, MT7628_TX_MAX_CNT0);
 		mtk_w32(eth, 0, MT7628_TX_CTX_IDX0);

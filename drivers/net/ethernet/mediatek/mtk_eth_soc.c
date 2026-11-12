@@ -1422,10 +1422,16 @@ static void mtk_tx_unmap(struct mtk_eth *eth, struct mtk_tx_buf *tx_buf,
 		}
 	} else {
 		if (dma_unmap_len(tx_buf, dma_len0)) {
-			dma_unmap_page(eth->dma_dev,
-				       dma_unmap_addr(tx_buf, dma_addr0),
-				       dma_unmap_len(tx_buf, dma_len0),
-				       DMA_TO_DEVICE);
+			if (tx_buf->flags & MTK_TX_FLAGS_SINGLE0)
+				dma_unmap_single(eth->dma_dev,
+						 dma_unmap_addr(tx_buf, dma_addr0),
+						 dma_unmap_len(tx_buf, dma_len0),
+						 DMA_TO_DEVICE);
+			else
+				dma_unmap_page(eth->dma_dev,
+					       dma_unmap_addr(tx_buf, dma_addr0),
+					       dma_unmap_len(tx_buf, dma_len0),
+					       DMA_TO_DEVICE);
 		}
 
 		if (dma_unmap_len(tx_buf, dma_len1)) {
@@ -1597,7 +1603,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 	struct mtk_mac *mac = netdev_priv(dev);
 	struct mtk_eth *eth = mac->hw;
 	const struct mtk_soc_data *soc = eth->soc;
-	struct mtk_tx_dma *itxd, *txd;
+	struct mtk_tx_dma *itxd, *txd, *last_mapped;
 	struct mtk_tx_dma *itxd_pdma, *txd_pdma;
 	struct mtk_tx_buf *itx_buf, *tx_buf;
 	int i, n_desc = 1;
@@ -1626,6 +1632,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 		     k++);
 
 	/* TX SG offload */
+	last_mapped = itxd;
 	txd = itxd;
 	txd_pdma = qdma_to_pdma(ring, txd);
 
@@ -1638,7 +1645,7 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 			bool new_desc = true;
 
 			if (MTK_HAS_CAPS(soc->caps, MTK_QDMA) ||
-			    (i & 0x1)) {
+			    !(k & 0x1)) {
 				txd = mtk_qdma_phys_to_virt(ring, txd->txd2);
 				txd_pdma = qdma_to_pdma(ring, txd);
 				if (txd == ring->last_free)
@@ -1673,11 +1680,18 @@ static int mtk_tx_map(struct sk_buff *skb, struct net_device *dev,
 
 			setup_tx_buf(eth, tx_buf, txd_pdma, txd_info.addr,
 				     txd_info.size, k++);
+			last_mapped = txd;
 
 			frag_size -= txd_info.size;
 			offset += txd_info.size;
 		}
 	}
+
+	/* PDMA completes descriptors individually. Keep the skb until all
+	 * of its mapped fragments have been consumed.
+	 */
+	if (!MTK_HAS_CAPS(soc->caps, MTK_QDMA))
+		itx_buf = mtk_desc_to_tx_buf(ring, txd, soc->tx.desc_size);
 
 	/* store skb to cleanup */
 	itx_buf->type = MTK_TYPE_SKB;
@@ -1725,9 +1739,11 @@ err_dma:
 		if (!MTK_HAS_CAPS(soc->caps, MTK_QDMA))
 			itxd_pdma->txd2 = TX_DMA_DESP2_DEF;
 
+		if (itxd == last_mapped)
+			break;
 		itxd = mtk_qdma_phys_to_virt(ring, itxd->txd2);
 		itxd_pdma = qdma_to_pdma(ring, itxd);
-	} while (itxd != txd);
+	} while (true);
 
 	return -ENOMEM;
 }

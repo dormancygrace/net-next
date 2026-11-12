@@ -24,6 +24,7 @@ enum mt753x_id {
 	ID_EN7581 = 4,
 	ID_AN7583 = 5,
 	ID_EN7528 = 6,
+	ID_MT7620 = 7,
 };
 
 #define	NUM_TRGMII_CTRL			5
@@ -424,6 +425,7 @@ enum mt7530_vlan_port_acc_frm {
 #define  MT7531_DIS_CLR			BIT(31)
 
 #define MT7530_GMACCR			0x30e0
+#define MT7620_GMACCR			0x3fe0
 #define  MAX_RX_JUMBO_MASK		GENMASK(5, 2)
 #define  MAX_RX_JUMBO(x)		FIELD_PREP(MAX_RX_JUMBO_MASK, x)
 #define  MAX_RX_PKT_LEN_MASK		GENMASK(1, 0)
@@ -815,6 +817,11 @@ struct mt7530_fdb {
 	bool noarp;
 };
 
+struct mt7530_mib_counter {
+	u64 value;
+	u32 last;
+};
+
 /* struct mt7530_port -	This is the main data structure for holding the state
  *			of the port.
  * @enable:	The status used for show port is enabled or not.
@@ -823,6 +830,7 @@ struct mt7530_fdb {
  *		untagged frames will be assigned to the related VLAN.
  * @sgmii_pcs:	Pointer to PCS instance for SerDes ports
  * @stats:	Cached port statistics for MDIO-connected switches
+ * @mib:	Software extension of narrow hardware counters
  */
 struct mt7530_port {
 	bool enable;
@@ -831,6 +839,7 @@ struct mt7530_port {
 	u16 pvid;
 	struct phylink_pcs *sgmii_pcs;
 	struct rtnl_link_stats64 stats;
+	struct mt7530_mib_counter *mib;
 };
 
 /* Port 5 mode definitions of the MT7530 switch */
@@ -857,12 +866,20 @@ struct mt753x_pcs {
  * @tag_protocol:	CPU port tagging protocol
  * @tag_len:		In-band CPU port tag length
  * @cpu_vlan_egress:	VLAN egress mode of the CPU port
+ * @reset_name:		Name of the MMIO switch reset, or NULL
+ * @num_mib_counters:	Number of narrow counters requiring software extension
+ * @num_vlan_entries:	Size of the VID mapping table, or zero for direct indexing
  * @phylink_mac_ops:	MAC link management operations
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
  * @setup_tc:		Optional hardware traffic control operations
+ * @vlan_index:		Translate VID to table index, or NULL for direct indexing
+ * @vlan_prepare:	Reserve a VID mapping before adding a table entry
  * @stats_ops:		Counter layout, readout and polling operations
  * @setup_mdio:		Register the internal MDIO bus and its interrupt source
+ * @irq_teardown:	Quiesce the link interrupt source before teardown
+ * @port_irq_enable:	Enable link interrupts when a user port opens
+ * @port_irq_disable:	Disable and synchronize link interrupts on close
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
  * @phy_write_c22:	Holding the way writing PHY port using C22
@@ -880,6 +897,9 @@ struct mt753x_info {
 	enum dsa_tag_protocol tag_protocol;
 	u8 tag_len;
 	u8 cpu_vlan_egress;
+	const char *reset_name;
+	unsigned int num_mib_counters;
+	unsigned int num_vlan_entries;
 
 	const struct mt7530_stats_ops *stats_ops;
 	const struct phylink_mac_ops *phylink_mac_ops;
@@ -888,7 +908,12 @@ struct mt753x_info {
 
 	int (*setup_tc)(struct dsa_switch *ds, int port,
 			enum tc_setup_type type, void *type_data);
+	int (*vlan_index)(struct mt7530_priv *priv, u16 vid);
+	int (*vlan_prepare)(struct mt7530_priv *priv, u16 vid, bool *allocated);
 	int (*setup_mdio)(struct mt7530_priv *priv);
+	void (*irq_teardown)(void *priv);
+	void (*port_irq_enable)(struct mt7530_priv *priv, int port);
+	void (*port_irq_disable)(struct mt7530_priv *priv, int port);
 	int (*sw_setup)(struct dsa_switch *ds);
 	int (*phy_read_c22)(struct mt7530_priv *priv, int port, int regnum);
 	int (*phy_write_c22)(struct mt7530_priv *priv, int port, int regnum,
@@ -929,6 +954,13 @@ struct mt753x_info {
  * @stats_lock:		Protects cached per-port stats from concurrent access
  * @stats_work:		Delayed work for polling MIB counters on MDIO switches
  * @stats_last:		Jiffies timestamp of last MIB counter poll
+ * @mib_port_intervals:	MT7620 CPU polls since the last full-port sample
+ * @sysc:		System controller containing the integrated switch mode
+ * @rst_ephy:		Reset control for the integrated PHYs
+ * @internal_mdio:	MDIO bus providing access to the integrated PHYs
+ * @irq:		MAC-managed PHY link interrupt
+ * @vlan_ids:		VID assigned to each hardware VLAN slot
+ * @vlan_used:		Bitmap of allocated VLAN slots, protected by reg_mutex
  */
 struct mt7530_priv {
 	struct device		*dev;
@@ -957,6 +989,13 @@ struct mt7530_priv {
 	spinlock_t stats_lock; /* protects cached stats counters */
 	struct delayed_work stats_work;
 	unsigned long stats_last;
+	u8 mib_port_intervals;
+	struct regmap *sysc;
+	struct reset_control *rst_ephy;
+	struct mii_bus *internal_mdio;
+	int irq;
+	u16 *vlan_ids;
+	unsigned long vlan_used;
 };
 
 struct mt7530_hw_vlan_entry {

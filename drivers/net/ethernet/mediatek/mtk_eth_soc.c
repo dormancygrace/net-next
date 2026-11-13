@@ -4211,6 +4211,8 @@ static void mtk_set_mcr_max_rx(struct mtk_mac *mac, u32 val)
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
 		u32 jumbo = 0;
 
+		/* The non-jumbo length allowance does not recognize S-tags. */
+		val += 2 * VLAN_HLEN;
 		if (val > ETH_FRAME_LEN + ETH_FCS_LEN)
 			jumbo = BIT(19) | FIELD_PREP(GENMASK(31, 28), 2);
 		mtk_m32(eth, BIT(19) | GENMASK(31, 28), jumbo,

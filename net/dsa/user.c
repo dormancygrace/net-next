@@ -2583,6 +2583,29 @@ static int dsa_user_hwtstamp_set(struct net_device *dev,
 	return ds->ops->port_hwtstamp_set(ds, dp->index, cfg, extack);
 }
 
+static int dsa_user_vlan_tx_add_vid(struct net_device *dev, __be16 proto,
+				    u16 vid)
+{
+	struct dsa_port *dp = dsa_user_to_port(dev);
+
+	/* Without an in-band tag the conduit inserts the VLAN header, so it
+	 * has to know the VIDs in use on its user ports.
+	 */
+	if (!dp->cpu_dp->tag_ops->hw_vlan_tx)
+		return 0;
+
+	return vlan_vid_add(dsa_port_to_conduit(dp), proto, vid);
+}
+
+static void dsa_user_vlan_tx_kill_vid(struct net_device *dev, __be16 proto,
+				      u16 vid)
+{
+	struct dsa_port *dp = dsa_user_to_port(dev);
+
+	if (dp->cpu_dp->tag_ops->hw_vlan_tx)
+		vlan_vid_del(dsa_port_to_conduit(dp), proto, vid);
+}
+
 static const struct net_device_ops dsa_user_netdev_ops = {
 	.ndo_open		= dsa_user_open,
 	.ndo_stop		= dsa_user_close,
@@ -2602,6 +2625,8 @@ static const struct net_device_ops dsa_user_netdev_ops = {
 	.ndo_get_stats64	= dsa_user_get_stats64,
 	.ndo_vlan_rx_add_vid	= dsa_user_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= dsa_user_vlan_rx_kill_vid,
+	.ndo_vlan_tx_add_vid	= dsa_user_vlan_tx_add_vid,
+	.ndo_vlan_tx_kill_vid	= dsa_user_vlan_tx_kill_vid,
 	.ndo_change_mtu		= dsa_user_change_mtu,
 	.ndo_fill_forward_path	= dsa_user_fill_forward_path,
 	.ndo_hwtstamp_get	= dsa_user_hwtstamp_get,
@@ -2715,6 +2740,11 @@ void dsa_user_setup_tagger(struct net_device *user)
 
 	user->features = conduit->vlan_features | NETIF_F_HW_TC;
 	user->hw_features |= NETIF_F_HW_TC;
+	if (cpu_dp->tag_ops->hw_vlan_tx &&
+	    (conduit->features & NETIF_F_HW_VLAN_CTAG_TX)) {
+		user->features |= NETIF_F_HW_VLAN_CTAG_TX;
+		user->hw_features |= NETIF_F_HW_VLAN_CTAG_TX;
+	}
 	if (user->needed_tailroom)
 		user->features &= ~(NETIF_F_SG | NETIF_F_FRAGLIST);
 	if (ds->needs_standalone_vlan_filtering)

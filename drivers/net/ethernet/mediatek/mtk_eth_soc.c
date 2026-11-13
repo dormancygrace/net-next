@@ -5178,6 +5178,13 @@ static netdev_features_t mtk_mt7620_features_check(struct sk_buff *skb,
 	/* Keep the checks the core applies when there is no callback. */
 	features = vlan_features_check(skb, features);
 
+	/* The MT7620 checksum parser recognizes C-tags, but not S-tags. */
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    (skb->protocol == htons(ETH_P_8021AD) ||
+	     (skb_vlan_tag_present(skb) &&
+	      skb->vlan_proto == htons(ETH_P_8021AD))))
+		features &= ~(NETIF_F_CSUM_MASK | NETIF_F_GSO_MASK);
+
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
 	    (features & NETIF_F_HW_VLAN_CTAG_TX) &&
 	    skb_vlan_tag_present(skb)) {

@@ -4545,17 +4545,6 @@ static void mtk_sgmii_destroy(struct mtk_eth *eth)
 		mtk_pcs_lynxi_destroy(eth->sgmii_pcs[i]);
 }
 
-static int mtk_cleanup(struct mtk_eth *eth)
-{
-	mtk_sgmii_destroy(eth);
-	mtk_unreg_dev(eth);
-	mtk_free_dev(eth);
-	cancel_work_sync(&eth->pending_work);
-	cancel_delayed_work_sync(&eth->reset.monitor_work);
-
-	return 0;
-}
-
 static int mtk_get_link_ksettings(struct net_device *ndev,
 				  struct ethtool_link_ksettings *cmd)
 {
@@ -5426,26 +5415,27 @@ err_destroy_sgmii:
 static void mtk_remove(struct platform_device *pdev)
 {
 	struct mtk_eth *eth = platform_get_drvdata(pdev);
-	struct mtk_mac *mac;
-	int i;
 
-	/* stop all devices to make sure that dma is properly shut down */
-	for (i = 0; i < MTK_MAX_DEVS; i++) {
-		if (!eth->netdev[i])
-			continue;
-		mtk_stop(eth->netdev[i]);
-		mac = netdev_priv(eth->netdev[i]);
-		phylink_disconnect_phy(mac->phylink);
+	/* unregister_netdev() stops each running MAC before DMA is freed. */
+	mtk_unreg_dev(eth);
+	cancel_delayed_work_sync(&eth->reset.monitor_work);
+	cancel_work_sync(&eth->pending_work);
+
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_INT)) {
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_SHARED], eth);
+	} else {
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_TX], eth);
+		devm_free_irq(eth->dev, eth->irq[MTK_FE_IRQ_RX], eth);
 	}
-
-	mtk_wed_exit();
-	mtk_hw_deinit(eth);
 
 	netif_napi_del(&eth->tx_napi);
 	netif_napi_del(&eth->rx_napi);
-	mtk_cleanup(eth);
+	mtk_free_dev(eth);
+	mtk_sgmii_destroy(eth);
 	free_netdev(eth->dummy_dev);
+	mtk_wed_exit();
 	mtk_mdio_cleanup(eth);
+	mtk_hw_deinit(eth);
 }
 
 static const struct mtk_soc_data mt2701_data = {

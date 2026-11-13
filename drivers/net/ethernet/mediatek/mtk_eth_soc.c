@@ -2381,7 +2381,8 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
 			rxdcsum = &trxd.rxd4;
 		}
 
-		if (*rxdcsum & eth->soc->rx.dma_l4_valid)
+		if ((netdev->features & NETIF_F_RXCSUM) &&
+		    (*rxdcsum & eth->soc->rx.dma_l4_valid))
 			skb->ip_summed = CHECKSUM_UNNECESSARY;
 		else
 			skb_checksum_none_assert(skb);

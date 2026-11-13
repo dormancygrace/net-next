@@ -858,8 +858,11 @@ struct mt753x_pcs {
  * @tag_protocol:	CPU port tagging protocol
  * @tag_len:		In-band CPU port tag length
  * @cpu_vlan_egress:	VLAN egress mode of the CPU port
+ * @phylink_mac_ops:	MAC link management operations
  * @lpi_capabilities:	Speeds with supported transmit LPI
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
+ * @setup_tc:		Optional hardware traffic control operations
+ * @setup_mdio:		Register the internal MDIO bus and its interrupt source
  * @sw_setup:		Holding the handler to a device initialization
  * @phy_read_c22:	Holding the way reading PHY port using C22
  * @phy_write_c22:	Holding the way writing PHY port using C22
@@ -879,9 +882,13 @@ struct mt753x_info {
 	u8 tag_len;
 	u8 cpu_vlan_egress;
 
+	const struct phylink_mac_ops *phylink_mac_ops;
 	unsigned long lpi_capabilities;
 	const struct phylink_pcs_ops *pcs_ops;
 
+	int (*setup_tc)(struct dsa_switch *ds, int port,
+			enum tc_setup_type type, void *type_data);
+	int (*setup_mdio)(struct mt7530_priv *priv);
 	int (*sw_setup)(struct dsa_switch *ds);
 	int (*phy_read_c22)(struct mt7530_priv *priv, int port, int regnum);
 	int (*phy_write_c22)(struct mt7530_priv *priv, int port, int regnum,

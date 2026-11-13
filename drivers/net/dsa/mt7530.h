@@ -863,6 +863,8 @@ struct mt753x_pcs {
  * @phy_iac:		Indirect PHY access register
  * @gmaccr:		Global receive frame length register
  * @max_mtu:		Maximum supported IP MTU
+ * @max_rx_pkt_len0:	Frame length threshold for RX length mode zero
+ * @rx_vlan_len:		VLAN header space to reserve in the RX length limit
  * @tag_protocol:	CPU port tagging protocol
  * @tag_len:		In-band CPU port tag length
  * @cpu_vlan_egress:	VLAN egress mode of the CPU port
@@ -894,6 +896,8 @@ struct mt753x_info {
 	u32 phy_iac;
 	u32 gmaccr;
 	unsigned int max_mtu;
+	u16 max_rx_pkt_len0;
+	u8 rx_vlan_len;
 	enum dsa_tag_protocol tag_protocol;
 	u8 tag_len;
 	u8 cpu_vlan_egress;

@@ -5,6 +5,7 @@
  */
 #include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
+#include <linux/if_vlan.h>
 #include <linux/iopoll.h>
 #include <linux/mdio.h>
 #include <linux/mfd/syscon.h>
@@ -1682,9 +1683,11 @@ mt7530_port_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
 	regmap_read(priv->regmap, reg, &val);
 	val &= ~MAX_RX_PKT_LEN_MASK;
 
-	/* Include the Ethernet header, any in-band CPU tag, and FCS. */
-	length = new_mtu + ETH_HLEN + priv->info->tag_len + ETH_FCS_LEN;
-	if (length <= 1522) {
+	/* Reserve VLAN headers without exceeding the hardware frame limit. */
+	length = min_t(unsigned int, new_mtu + priv->info->rx_vlan_len,
+		       priv->info->max_mtu);
+	length += ETH_HLEN + priv->info->tag_len + ETH_FCS_LEN;
+	if (length <= priv->info->max_rx_pkt_len0) {
 		val |= MAX_RX_PKT_LEN_1522;
 	} else if (length <= 1536) {
 		val |= MAX_RX_PKT_LEN_1536;
@@ -4041,6 +4044,8 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7620_PHY_IAC,
 		.gmaccr = MT7620_GMACCR,
 		.max_mtu = MT7620_MAX_MTU,
+		.max_rx_pkt_len0 = ETH_FRAME_LEN + ETH_FCS_LEN,
+		.rx_vlan_len = 2 * VLAN_HLEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK_OOB,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_TAG,
 		.reset_name = "esw",
@@ -4062,6 +4067,7 @@ const struct mt753x_info mt753x_table[] = {
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4083,6 +4089,7 @@ const struct mt753x_info mt753x_table[] = {
 		.lpi_capabilities = MAC_100FD | MAC_1000FD,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4105,6 +4112,7 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4127,6 +4135,7 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4148,6 +4157,7 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4169,6 +4179,7 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,
@@ -4189,6 +4200,7 @@ const struct mt753x_info mt753x_table[] = {
 		.phy_iac = MT7531_PHY_IAC,
 		.gmaccr = MT7530_GMACCR,
 		.max_mtu = MT7530_MAX_MTU,
+		.max_rx_pkt_len0 = VLAN_ETH_FRAME_LEN + ETH_FCS_LEN,
 		.tag_protocol = DSA_TAG_PROTO_MTK,
 		.tag_len = MTK_HDR_LEN,
 		.cpu_vlan_egress = MT7530_VLAN_EGRESS_STACK,

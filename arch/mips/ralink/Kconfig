@@ -90,6 +90,11 @@ choice
 		depends on SOC_MT7620
 		select BUILTIN_DTB
 
+	config DTB_ZBT_WE826_T2
+		bool "ZBT WE826-T2"
+		depends on SOC_MT7620
+		select BUILTIN_DTB
+
 	config DTB_OMEGA2P
 		bool "Onion Omega2+"
 		depends on SOC_MT7620

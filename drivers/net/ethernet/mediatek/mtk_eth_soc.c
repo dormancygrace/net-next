@@ -17,6 +17,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/if_vlan.h>
 #include <linux/reset.h>
+#include <linux/sys_soc.h>
 #include <linux/tcp.h>
 #include <linux/interrupt.h>
 #include <linux/pinctrl/devinfo.h>
@@ -32,6 +33,18 @@
 
 #include "mtk_eth_soc.h"
 #include "mtk_wed.h"
+
+static const struct soc_device_attribute mt7620_soc_match[] = {
+	{ .family = "Ralink", .soc_id = "mt7620[an]" },
+	{ }
+};
+
+/* ECO 5 and later support TX checksum offload and segmentation. */
+static const struct soc_device_attribute mt7620_tx_offload_match[] = {
+	{ .family = "Ralink", .soc_id = "mt7620[an]", .revision = "*.[5-9]" },
+	{ .family = "Ralink", .soc_id = "mt7620[an]", .revision = "*.1[0-5]" },
+	{ }
+};
 
 static int mtk_msg_level = -1;
 module_param_named(msg_level, mtk_msg_level, int, 0);
@@ -5071,6 +5084,28 @@ static const struct ethtool_ops mtk_ethtool_ops = {
 	.set_eee		= mtk_set_eee,
 };
 
+static netdev_features_t mtk_mt7620_features_check(struct sk_buff *skb,
+						   struct net_device *dev,
+						   netdev_features_t features)
+{
+	struct mtk_mac *mac = netdev_priv(dev);
+	struct mtk_eth *eth = mac->hw;
+
+	/* Keep the checks the core applies when there is no callback. */
+	features = vlan_features_check(skb, features);
+
+	if (!MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620))
+		return features;
+
+	/* The checksum parser recognizes C-tags, but not S-tags. */
+	if (skb->protocol == htons(ETH_P_8021AD) ||
+	    (skb_vlan_tag_present(skb) &&
+	     skb->vlan_proto == htons(ETH_P_8021AD)))
+		features &= ~(NETIF_F_CSUM_MASK | NETIF_F_GSO_MASK);
+
+	return features;
+}
+
 static const struct net_device_ops mtk_netdev_ops = {
 	.ndo_uninit		= mtk_uninit,
 	.ndo_open		= mtk_open,
@@ -5084,6 +5119,7 @@ static const struct net_device_ops mtk_netdev_ops = {
 	.ndo_get_stats64        = mtk_get_stats64,
 	.ndo_fix_features	= mtk_fix_features,
 	.ndo_set_features	= mtk_set_features,
+	.ndo_features_check	= mtk_mt7620_features_check,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= mtk_poll_controller,
 #endif
@@ -5097,6 +5133,7 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 {
 	const struct phylink_mac_ops *mac_ops = &mtk_phylink_ops;
 	const __be32 *_id = of_get_property(np, "reg", NULL);
+	netdev_features_t features = eth->soc->hw_features;
 	phy_interface_t phy_mode;
 	struct phylink *phylink;
 	struct mtk_mac *mac;
@@ -5277,13 +5314,18 @@ static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
 	eth->netdev[id]->netdev_ops = &mtk_netdev_ops;
 	eth->netdev[id]->base_addr = (unsigned long)eth->base;
 
-	eth->netdev[id]->hw_features = eth->soc->hw_features;
+	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620) &&
+	    soc_device_match(mt7620_tx_offload_match))
+		features |= NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO |
+			    NETIF_F_TSO6 | NETIF_F_IPV6_CSUM;
+
+	eth->netdev[id]->hw_features = features;
 	if (eth->hwlro)
 		eth->netdev[id]->hw_features |= NETIF_F_LRO;
 
-	eth->netdev[id]->vlan_features = eth->soc->hw_features &
+	eth->netdev[id]->vlan_features = features &
 		~NETIF_F_HW_VLAN_CTAG_TX;
-	eth->netdev[id]->features |= eth->soc->hw_features;
+	eth->netdev[id]->features |= features;
 	eth->netdev[id]->ethtool_ops = &mtk_ethtool_ops;
 
 	eth->netdev[id]->irq = eth->irq[MTK_FE_IRQ_SHARED];
@@ -5419,6 +5461,10 @@ static int mtk_probe(struct platform_device *pdev)
 		eth->ip_align = NET_IP_ALIGN;
 
 	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7620)) {
+		if (!soc_device_match(mt7620_soc_match))
+			return dev_err_probe(eth->dev, -ENODEV,
+					     "MT7620 SoC identification unavailable\n");
+
 		eth->rst_fe = devm_reset_control_get_exclusive(eth->dev, "fe");
 		if (IS_ERR(eth->rst_fe))
 			return dev_err_probe(eth->dev, PTR_ERR(eth->rst_fe),

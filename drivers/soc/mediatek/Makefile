@@ -8,4 +8,5 @@ obj-$(CONFIG_MTK_REGULATOR_COUPLER) += mtk-regulator-coupler.o
 obj-$(CONFIG_MTK_MMSYS) += mtk-mmsys.o
 obj-$(CONFIG_MTK_MMSYS) += mtk-mutex.o
 obj-$(CONFIG_MTK_SVS) += mtk-svs.o
+obj-$(CONFIG_MT7620_SOCINFO) += mt7620-socinfo.o
 obj-$(CONFIG_MTK_SOCINFO) += mtk-socinfo.o

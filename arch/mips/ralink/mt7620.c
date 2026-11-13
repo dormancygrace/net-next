@@ -198,6 +198,10 @@ static int __init mt7620_soc_dev_init(void)
 	struct soc_device *soc_dev;
 	struct soc_device_attribute *soc_dev_attr;
 
+	/* MT7620A/N identification is registered by mt7620-socinfo. */
+	if (!is_mt76x8())
+		return 0;
+
 	soc_dev_attr = kzalloc_obj(*soc_dev_attr);
 	if (!soc_dev_attr)
 		return -ENOMEM;

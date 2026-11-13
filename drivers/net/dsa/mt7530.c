@@ -45,11 +45,145 @@ struct mt7530_stats_ops {
 			       const struct ethtool_rmon_hist_range **ranges);
 	void (*update)(struct mt7530_priv *priv);
 	unsigned int poll_interval_ms;
+	bool always_poll;
 };
 
 static struct mt753x_pcs *pcs_to_mt753x_pcs(struct phylink_pcs *pcs)
 {
 	return container_of(pcs, struct mt753x_pcs, pcs);
+}
+
+/* MT7620 differences within the MT7530 switch family. */
+#define MT7620_PHY_IAC		0x7004
+#define MT7620_IMR		0x7008
+#define MT7620_ISR		0x700c
+#define MT7620_PPSC		0x7000
+#define MT7620_VTIM(x)		(0x100 + ((x) / 2) * 4)
+#define MT7620_NUM_VLANS		16
+#define MT7620_MAX_MTU		(2048 - ETH_HLEN - ETH_FCS_LEN)
+
+struct mt7620_mib_desc {
+	u16 offset;
+	u8 shift;
+	u32 mask;
+	const char *name;
+};
+
+static const struct mt7620_mib_desc mt7620_mib[] = {
+	{ 0x10, 0, U16_MAX, "tx_good_packets" },
+	{ 0x10, 16, U16_MAX, "tx_bad_packets" },
+	{ 0x14, 0, U32_MAX, "tx_bad_bytes" },
+	{ 0x18, 0, U32_MAX, "tx_bytes" },
+	{ 0x1c, 0, U16_MAX, "tx_dropped" },
+	{ 0x20, 0, U16_MAX, "rx_good_packets" },
+	{ 0x20, 16, U16_MAX, "rx_bad_packets" },
+	{ 0x24, 0, U32_MAX, "rx_bad_bytes" },
+	{ 0x28, 0, U32_MAX, "rx_bytes" },
+	{ 0x2c, 16, U16_MAX, "rx_ctrl_dropped" },
+	{ 0x2c, 0, U16_MAX, "rx_ingress_dropped" },
+	{ 0x30, 16, U16_MAX, "rx_arl_dropped" },
+	{ 0x30, 0, U16_MAX, "rx_filtered" },
+};
+
+/* Packet counters wrap in about 44 ms on the gigabit CPU port and
+ * 440 ms on 100BASE-T ports. Keep the CPU poll at 20 ms and sample
+ * the remaining ports every tenth tick, as in the OpenWrt driver.
+ */
+#define MT7620_MIB_PORT_INTERVALS 10
+
+static void mt7620_mib_update(struct mt7530_priv *priv)
+{
+	u32 raw[MT7530_NUM_PORTS][ARRAY_SIZE(mt7620_mib)];
+	unsigned long ports = BIT(6);
+	int port, i;
+
+	if (++priv->mib_port_intervals == MT7620_MIB_PORT_INTERVALS) {
+		ports = GENMASK(MT7530_NUM_PORTS - 1, 0);
+		priv->mib_port_intervals = 0;
+	}
+
+	for_each_set_bit(port, &ports, MT7530_NUM_PORTS) {
+		for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++) {
+			const struct mt7620_mib_desc *m = &mt7620_mib[i];
+			u32 val;
+
+			regmap_read(priv->regmap, 0x4000 + port * 0x100 +
+				    m->offset, &val);
+			raw[port][i] = (val >> m->shift) & m->mask;
+		}
+	}
+
+	spin_lock_bh(&priv->stats_lock);
+	for_each_set_bit(port, &ports, MT7530_NUM_PORTS) {
+		for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++) {
+			struct mt7530_mib_counter *counter = &priv->ports[port].mib[i];
+
+			counter->value += (raw[port][i] - counter->last) &
+					  mt7620_mib[i].mask;
+			counter->last = raw[port][i];
+		}
+	}
+	spin_unlock_bh(&priv->stats_lock);
+}
+
+static void mt7620_get_stats64(struct dsa_switch *ds, int port,
+			       struct rtnl_link_stats64 *stats)
+{
+	struct mt7530_priv *priv = ds->priv;
+	struct mt7530_mib_counter *m = priv->ports[port].mib;
+
+	spin_lock_bh(&priv->stats_lock);
+	stats->tx_packets = m[0].value;
+	stats->tx_errors = m[1].value;
+	stats->tx_bytes = m[3].value - m[0].value * ETH_FCS_LEN;
+	stats->tx_dropped = m[4].value;
+	stats->rx_packets = m[5].value;
+	stats->rx_errors = m[6].value;
+	stats->rx_bytes = m[8].value - m[5].value * ETH_FCS_LEN;
+	stats->rx_dropped = m[9].value + m[10].value + m[11].value + m[12].value;
+	spin_unlock_bh(&priv->stats_lock);
+}
+
+static irqreturn_t mt7620_link_irq(int irq, void *data)
+{
+	struct mt7530_priv *priv = data;
+	struct phy_device *phydev;
+	u32 status, mask;
+	int port;
+
+	regmap_read(priv->regmap, MT7620_ISR, &status);
+	regmap_read(priv->regmap, MT7620_IMR, &mask);
+	status &= GENMASK(4, 0) & ~mask;
+	if (!status)
+		return IRQ_NONE;
+	regmap_write(priv->regmap, MT7620_ISR, status);
+
+	for (port = 0; port < MT7530_NUM_PHYS; port++) {
+		phydev = mdiobus_get_phy(priv->internal_mdio, port);
+		if ((status & BIT(port)) && phydev)
+			phy_mac_interrupt(phydev);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static void mt7620_mask_irq(void *data)
+{
+	struct mt7530_priv *priv = data;
+
+	regmap_write(priv->regmap, MT7620_IMR, ~0);
+	synchronize_irq(priv->irq);
+}
+
+static void mt7620_mac_port_get_caps(struct dsa_switch *ds, int port,
+				     struct phylink_config *config)
+{
+	if (port == 6 || port < MT7530_NUM_PHYS) {
+		__set_bit(PHY_INTERFACE_MODE_INTERNAL,
+			  config->supported_interfaces);
+		config->mac_capabilities |= port == 6 ? MAC_1000FD :
+			MAC_10 | MAC_100;
+	}
 }
 
 /* String, offset, and register size in bytes if different from 4 bytes */
@@ -688,6 +822,9 @@ mt753x_phy_read_c45(struct mii_bus *bus, int port, int devad, int regnum)
 {
 	struct mt7530_priv *priv = bus->priv;
 
+	if (!priv->info->phy_read_c45)
+		return -EOPNOTSUPP;
+
 	return priv->info->phy_read_c45(priv, port, devad, regnum);
 }
 
@@ -705,7 +842,38 @@ mt753x_phy_write_c45(struct mii_bus *bus, int port, int devad, int regnum,
 {
 	struct mt7530_priv *priv = bus->priv;
 
+	if (!priv->info->phy_write_c45)
+		return -EOPNOTSUPP;
+
 	return priv->info->phy_write_c45(priv, port, devad, regnum, val);
+}
+
+static void mt7620_get_strings(struct dsa_switch *ds, int port, u32 stringset,
+			       u8 *data)
+{
+	int i;
+
+	if (stringset != ETH_SS_STATS)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(mt7620_mib); i++)
+		ethtool_puts(&data, mt7620_mib[i].name);
+}
+
+static int mt7620_get_sset_count(struct dsa_switch *ds, int port, int sset)
+{
+	return sset == ETH_SS_STATS ? ARRAY_SIZE(mt7620_mib) : 0;
+}
+
+static void mt7620_get_ethtool_stats(struct dsa_switch *ds, int port, u64 *data)
+{
+	struct mt7530_priv *priv = ds->priv;
+	int i;
+
+	spin_lock_bh(&priv->stats_lock);
+	for (i = 0; i < priv->info->num_mib_counters; i++)
+		data[i] = priv->ports[port].mib[i].value;
+	spin_unlock_bh(&priv->stats_lock);
 }
 
 static void
@@ -973,6 +1141,16 @@ static void mt7530_get_eth_ctrl_stats(struct dsa_switch *ds, int port,
 	mt7530_read_port_stats(priv, port, MT7530_PORT_MIB_RX_PAUSE, 1,
 			       &ctrl_stats->MACControlFramesReceived);
 }
+
+static const struct mt7530_stats_ops mt7620_stats_ops = {
+	.get_strings = mt7620_get_strings,
+	.get_ethtool_stats = mt7620_get_ethtool_stats,
+	.get_sset_count = mt7620_get_sset_count,
+	.get_stats64 = mt7620_get_stats64,
+	.update = mt7620_mib_update,
+	.poll_interval_ms = 20,
+	.always_poll = true,
+};
 
 static const struct mt7530_stats_ops mt7530_stats_ops = {
 	.get_strings = mt7530_get_strings,
@@ -1404,6 +1582,22 @@ mt753x_cpu_port_enable(struct dsa_switch *ds, int port)
 			   PCR_PORT_VLAN_MASK, MT7530_PORT_FALLBACK_MODE);
 }
 
+static void mt7620_port_irq_enable(struct mt7530_priv *priv, int port)
+{
+	/* The PHY has been attached before the user port is opened. */
+	regmap_write(priv->regmap, MT7620_ISR, BIT(port));
+	regmap_clear_bits(priv->regmap, MT7620_IMR, BIT(port));
+}
+
+static void mt7620_port_irq_disable(struct mt7530_priv *priv, int port)
+{
+	if (port >= MT7530_NUM_PHYS)
+		return;
+
+	regmap_set_bits(priv->regmap, MT7620_IMR, BIT(port));
+	synchronize_irq(priv->irq);
+}
+
 static int
 mt7530_port_enable(struct dsa_switch *ds, int port,
 		   struct phy_device *phy)
@@ -1428,6 +1622,9 @@ mt7530_port_enable(struct dsa_switch *ds, int port,
 
 	mutex_unlock(&priv->reg_mutex);
 
+	if (priv->info->port_irq_enable && dsa_port_is_user(dp))
+		priv->info->port_irq_enable(priv, port);
+
 	if (priv->id != ID_MT7530 && priv->id != ID_MT7621)
 		return 0;
 
@@ -1443,6 +1640,9 @@ static void
 mt7530_port_disable(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
+
+	if (priv->info->port_irq_disable)
+		priv->info->port_irq_disable(priv, port);
 
 	mutex_lock(&priv->reg_mutex);
 
@@ -1483,8 +1683,10 @@ mt7530_port_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
 	regmap_read(priv->regmap, reg, &val);
 	val &= ~MAX_RX_PKT_LEN_MASK;
 
-	/* Include the Ethernet header, any in-band CPU tag, and FCS. */
-	length = new_mtu + ETH_HLEN + priv->info->tag_len + ETH_FCS_LEN;
+	/* Reserve VLAN headers without exceeding the hardware frame limit. */
+	length = min_t(unsigned int, new_mtu + priv->info->rx_vlan_len,
+		       priv->info->max_mtu);
+	length += ETH_HLEN + priv->info->tag_len + ETH_FCS_LEN;
 	if (length <= priv->info->max_rx_pkt_len0) {
 		val |= MAX_RX_PKT_LEN_1522;
 	} else if (length <= 1536) {
@@ -1663,11 +1865,53 @@ mt7530_port_bridge_join(struct dsa_switch *ds, int port,
 	return 0;
 }
 
+static int mt7620_vlan_index(struct mt7530_priv *priv, u16 vid)
+{
+	int slot;
+
+	for (slot = 0; slot < priv->info->num_vlan_entries; slot++)
+		if ((priv->vlan_used & BIT(slot)) && priv->vlan_ids[slot] == vid)
+			return slot;
+
+	return -ENOENT;
+}
+
+static int mt7620_vlan_prepare(struct mt7530_priv *priv, u16 vid, bool *allocated)
+{
+	int slot;
+
+	slot = mt7620_vlan_index(priv, vid);
+	if (slot >= 0)
+		return slot;
+
+	for (slot = 1; slot < priv->info->num_vlan_entries; slot++)
+		if (!(priv->vlan_used & BIT(slot)))
+			break;
+	if (slot == priv->info->num_vlan_entries)
+		return -ENOSPC;
+
+	priv->vlan_ids[slot] = vid;
+	priv->vlan_used |= BIT(slot);
+	*allocated = true;
+	regmap_update_bits(priv->regmap, MT7620_VTIM(slot),
+			   0xfff << ((slot % 2) * 12),
+			   vid << ((slot % 2) * 12));
+
+	return slot;
+}
+
 static int
 mt7530_vlan_cmd(struct mt7530_priv *priv, enum mt7530_vlan_cmd cmd, u16 vid)
 {
 	u32 val;
 	int ret;
+
+	if (priv->info->vlan_index) {
+		ret = priv->info->vlan_index(priv, vid);
+		if (ret < 0)
+			return ret;
+		vid = ret;
+	}
 
 	val = VTCR_BUSY | VTCR_FUNC(cmd) | VTCR_VID(vid);
 	ret = regmap_write(priv->regmap, MT7530_VTCR, val);
@@ -2024,15 +2268,18 @@ mt7530_hw_vlan_del(struct mt7530_priv *priv,
 	}
 }
 
-static void
+static int
 mt7530_hw_vlan_update(struct mt7530_priv *priv, u16 vid,
 		      struct mt7530_hw_vlan_entry *entry,
 		      mt7530_vlan_op vlan_op)
 {
 	u32 val;
+	int ret;
 
 	/* Fetch entry */
-	mt7530_vlan_cmd(priv, MT7530_VTCR_RD_VID, vid);
+	ret = mt7530_vlan_cmd(priv, MT7530_VTCR_RD_VID, vid);
+	if (ret && priv->info->vlan_index)
+		return ret;
 
 	regmap_read(priv->regmap, MT7530_VAWD1, &val);
 
@@ -2042,7 +2289,10 @@ mt7530_hw_vlan_update(struct mt7530_priv *priv, u16 vid,
 	vlan_op(priv, entry);
 
 	/* Flush result to hardware */
-	mt7530_vlan_cmd(priv, MT7530_VTCR_WR_VID, vid);
+	ret = mt7530_vlan_cmd(priv, MT7530_VTCR_WR_VID, vid);
+
+	/* Only switches with a VID mapping report table command errors. */
+	return priv->info->vlan_index ? ret : 0;
 }
 
 static int
@@ -2054,8 +2304,20 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 	bool pvid = vlan->flags & BRIDGE_VLAN_INFO_PVID;
 	struct mt7530_hw_vlan_entry new_entry;
 	struct mt7530_priv *priv = ds->priv;
+	int ret = 0, slot = -1;
+	bool allocated = false;
 
 	mutex_lock(&priv->reg_mutex);
+
+	if (priv->info->vlan_prepare && vlan->vid) {
+		slot = priv->info->vlan_prepare(priv, vlan->vid, &allocated);
+		if (slot < 0) {
+			if (slot == -ENOSPC)
+				NL_SET_ERR_MSG_MOD(extack, "VLAN table is full");
+			ret = slot;
+			goto out;
+		}
+	}
 
 	/* VID 0 is managed exclusively by mt7530_setup_vlan0() for
 	 * VLAN-unaware bridge operation. Don't let the bridge overwrite
@@ -2065,7 +2327,9 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 		goto skip_vlan_table;
 
 	mt7530_hw_vlan_entry_init(&new_entry, port, untagged);
-	mt7530_hw_vlan_update(priv, vlan->vid, &new_entry, mt7530_hw_vlan_add);
+	ret = mt7530_hw_vlan_update(priv, vlan->vid, &new_entry, mt7530_hw_vlan_add);
+	if (ret)
+		goto out;
 
 skip_vlan_table:
 
@@ -2095,9 +2359,12 @@ skip_vlan_table:
 				   G0_PORT_VID_MASK, G0_PORT_VID_DEF);
 	}
 
+out:
+	if (ret && allocated)
+		priv->vlan_used &= ~BIT(slot);
 	mutex_unlock(&priv->reg_mutex);
 
-	return 0;
+	return ret;
 }
 
 static int
@@ -2106,16 +2373,25 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 {
 	struct mt7530_hw_vlan_entry target_entry;
 	struct mt7530_priv *priv = ds->priv;
+	int ret = 0, slot = -1;
 
 	mutex_lock(&priv->reg_mutex);
+
+	if (priv->info->vlan_index && vlan->vid) {
+		slot = priv->info->vlan_index(priv, vlan->vid);
+		if (slot < 0)
+			goto out;
+	}
 
 	/* VID 0 is managed exclusively by mt7530_setup_vlan0(). */
 	if (vlan->vid == 0)
 		goto skip_vlan_table;
 
 	mt7530_hw_vlan_entry_init(&target_entry, port, 0);
-	mt7530_hw_vlan_update(priv, vlan->vid, &target_entry,
-			      mt7530_hw_vlan_del);
+	ret = mt7530_hw_vlan_update(priv, vlan->vid, &target_entry,
+				    mt7530_hw_vlan_del);
+	if (ret)
+		goto out;
 
 skip_vlan_table:
 	/* PVID is being restored to the default whenever the PVID port
@@ -2134,10 +2410,18 @@ skip_vlan_table:
 				   G0_PORT_VID_MASK, G0_PORT_VID_DEF);
 	}
 
+	if (slot > 0 && slot < priv->info->num_vlan_entries) {
+		u32 val;
 
+		regmap_read(priv->regmap, MT7530_VAWD1, &val);
+		if (!(val & VLAN_VALID))
+			priv->vlan_used &= ~BIT(slot);
+	}
+
+out:
 	mutex_unlock(&priv->reg_mutex);
 
-	return 0;
+	return ret;
 }
 
 static int mt753x_port_mirror_add(struct dsa_switch *ds, int port,
@@ -2420,7 +2704,7 @@ mt7530_free_mdio_irq(struct mt7530_priv *priv)
 }
 
 static int
-mt7530_register_mdio(struct mt7530_priv *priv)
+mt7530_register_mdio(struct mt7530_priv *priv, bool mac_irq)
 {
 	struct device_node *mnp, *np = priv->dev->of_node;
 	struct dsa_switch *ds = priv->ds;
@@ -2456,6 +2740,14 @@ mt7530_register_mdio(struct mt7530_priv *priv)
 	if (priv->irq_domain && !mnp)
 		mt7530_setup_mdio_irq(priv);
 
+	if (mac_irq) {
+		int port;
+
+		for (port = 0; port < MT7530_NUM_PHYS; port++)
+			bus->irq[port] = PHY_MAC_INTERRUPT;
+		priv->internal_mdio = bus;
+	}
+
 	ret = devm_of_mdiobus_register(dev, bus, mnp);
 	if (ret) {
 		dev_err(dev, "failed to register MDIO bus: %d\n", ret);
@@ -2476,7 +2768,26 @@ static int mt7530_setup_mdio(struct mt7530_priv *priv)
 	if (ret)
 		return ret;
 
-	return mt7530_register_mdio(priv);
+	return mt7530_register_mdio(priv, false);
+}
+
+static int mt7620_setup_mdio(struct mt7530_priv *priv)
+{
+	int ret;
+
+	ret = mt7530_register_mdio(priv, true);
+	if (ret)
+		return ret;
+
+	/* The MDIO bus must outlive the handler, including probe unwind. */
+	if (!priv->internal_mdio)
+		return -ENODEV;
+	ret = devm_request_threaded_irq(priv->dev, priv->irq,
+					NULL, mt7620_link_irq, IRQF_ONESHOT,
+					dev_name(priv->dev), priv);
+	if (ret)
+		return ret;
+	return devm_add_action_or_reset(priv->dev, mt7620_mask_irq, priv);
 }
 
 static int
@@ -3074,6 +3385,44 @@ mt7531_mac_config(struct dsa_switch *ds, int port, unsigned int mode,
 	}
 }
 
+static void mt7620_phylink_mac_config(struct phylink_config *config,
+				      unsigned int mode,
+				      const struct phylink_link_state *state)
+{
+	/* Integrated PHY status is synchronized by the switch's PPSC. */
+}
+
+static void mt7620_phylink_mac_link_down(struct phylink_config *config,
+					 unsigned int mode,
+					 phy_interface_t interface)
+{
+	struct dsa_port *dp = dsa_phylink_to_port(config);
+	struct mt7530_priv *priv = dp->ds->priv;
+
+	if (dp->index == 6)
+		return;
+	regmap_clear_bits(priv->regmap, MT753X_PMCR_P(dp->index),
+			  PMCR_MAC_TX_EN | PMCR_MAC_RX_EN);
+}
+
+static void mt7620_phylink_mac_link_up(struct phylink_config *config,
+				       struct phy_device *phydev,
+				       unsigned int mode,
+				       phy_interface_t interface,
+				       int speed, int duplex,
+				       bool tx_pause, bool rx_pause)
+{
+	struct dsa_port *dp = dsa_phylink_to_port(config);
+	struct mt7530_priv *priv = dp->ds->priv;
+
+	if (dp->index == 6)
+		return;
+	regmap_write(priv->regmap, MT753X_PMCR_P(dp->index),
+		     PMCR_IFG_XMIT(1) | PMCR_MAC_MODE |
+		     PMCR_MAC_TX_EN | PMCR_MAC_RX_EN |
+		     PMCR_BACKOFF_EN | PMCR_BACKPR_EN);
+}
+
 static struct phylink_pcs *
 mt753x_phylink_mac_select_pcs(struct phylink_config *config,
 			      phy_interface_t interface)
@@ -3295,6 +3644,117 @@ static const struct phylink_pcs_ops mt7530_pcs_ops = {
 	.pcs_an_restart = mt7530_pcs_an_restart,
 };
 
+static int mt7620_setup(struct dsa_switch *ds)
+{
+	struct mt7530_priv *priv = ds->priv;
+	int ret, port;
+
+	if (!dsa_is_cpu_port(ds, 6) || dsa_is_user_port(ds, 5))
+		return -EINVAL;
+
+	priv->sysc = syscon_regmap_lookup_by_phandle(priv->dev->of_node,
+						     "mediatek,sysc");
+	if (IS_ERR(priv->sysc))
+		return PTR_ERR(priv->sysc);
+	priv->rst_ephy = devm_reset_control_get_exclusive(priv->dev, "ephy");
+	if (IS_ERR(priv->rst_ephy))
+		return PTR_ERR(priv->rst_ephy);
+	priv->irq = of_irq_get(priv->dev->of_node, 0);
+	if (priv->irq <= 0)
+		return priv->irq ?: -EINVAL;
+
+	ret = reset_control_assert(priv->rstc);
+	if (ret)
+		return ret;
+	usleep_range(60, 120);
+	ret = reset_control_deassert(priv->rstc);
+	if (ret)
+		return ret;
+	usleep_range(1000, 1200);
+
+	/* A new setup resets hardware counters even if probe state is reused. */
+	spin_lock_bh(&priv->stats_lock);
+	for (port = 0; port < MT7530_NUM_PORTS; port++)
+		memset(priv->ports[port].mib, 0,
+		       priv->info->num_mib_counters * sizeof(*priv->ports[port].mib));
+	spin_unlock_bh(&priv->stats_lock);
+
+	/* Integrated Ethernet requires RC mode and port 4's embedded PHY. */
+	ret = regmap_update_bits(priv->sysc, 0x14, BIT(8) | GENMASK(15, 14),
+				 BIT(8) | GENMASK(15, 14));
+	if (ret)
+		return ret;
+
+	regmap_write(priv->regmap, MT7620_IMR, ~0);
+	regmap_write(priv->regmap, MT7620_ISR, GENMASK(6, 0));
+	regmap_clear_bits(priv->regmap, 0x3ff0, GENMASK(5, 4));
+	regmap_clear_bits(priv->regmap, 0x7014, GENMASK(28, 24) |
+			  GENMASK(20, 16));
+
+	ret = reset_control_reset(priv->rst_ephy);
+	if (ret)
+		return ret;
+
+	/* PPSC follows negotiated EPHY status; link callbacks do not force it. */
+	regmap_write(priv->regmap, MT7620_PPSC,
+		     BIT(31) | BIT(30) | (5 << 24) | BIT(23) | (4 << 8));
+	regmap_write(priv->regmap, MT753X_MFC,
+		     BC_FFP(BIT(6)) | UNM_FFP(BIT(6)) | UNU_FFP(BIT(6)) |
+		     MT7530_CPU_EN | MT7530_CPU_PORT(6));
+
+	ds->assisted_learning_on_cpu_port = true;
+	ds->untag_vlan_aware_bridge_pvid = true;
+	ds->mtu_enforcement_ingress = true;
+	ds->ageing_time_min = 2 * 1000;
+	ds->ageing_time_max = 256 * 4096 * 1000;
+
+	for (port = 0; port < MT7530_NUM_PORTS; port++) {
+		priv->ports[port].pm = port == 6 ?
+			PCR_MATRIX(dsa_user_ports(ds)) : 0;
+		regmap_write(priv->regmap, MT753X_PMCR_P(port),
+			     port == 6 ? 0x5e33b : 0);
+		regmap_update_bits(priv->regmap, MT7530_PCR_P(port),
+				   PCR_MATRIX_MASK | PCR_PORT_VLAN_MASK,
+				   port == 6 ? PCR_MATRIX(dsa_user_ports(ds)) |
+				   MT7530_PORT_FALLBACK_MODE : 0);
+		regmap_set_bits(priv->regmap, MT7530_PSC_P(port), SA_DIS);
+		regmap_write(priv->regmap, MT7530_PVC_P(port),
+			     STAG_VPID(ETH_P_8021Q) |
+			     VLAN_ATTR(MT7530_VLAN_TRANSPARENT) |
+			     PVC_EG_TAG(MT7530_VLAN_EG_CONSISTENT));
+		regmap_update_bits(priv->regmap, MT7530_PPBV1_P(port),
+				   G0_PORT_VID_MASK, 0);
+	}
+
+	regmap_update_bits(priv->regmap, MT7620_GMACCR,
+			   MAX_RX_JUMBO_MASK | MAX_RX_PKT_LEN_MASK,
+			   MAX_RX_JUMBO(2) | MAX_RX_PKT_LEN_JUMBO);
+	regmap_set_bits(priv->regmap, 0x4800, GENMASK(30, 24));
+
+	/* Clear all 16 slots, then reserve slot zero for VLAN-unaware bridges. */
+	for (port = 0; port < MT7620_NUM_VLANS; port++) {
+		u32 val;
+
+		regmap_write(priv->regmap, MT7530_VAWD1, 0);
+		regmap_write(priv->regmap, MT7530_VAWD2, 0);
+		regmap_write(priv->regmap, MT7530_VTCR,
+			     VTCR_BUSY | VTCR_FUNC(MT7530_VTCR_WR_VID) | port);
+		ret = regmap_read_poll_timeout(priv->regmap, MT7530_VTCR, val,
+					       !(val & VTCR_BUSY), 20, 20000);
+		if (ret)
+			return ret;
+	}
+	priv->vlan_used = BIT(0);
+	priv->vlan_ids[0] = 0;
+	regmap_update_bits(priv->regmap, MT7620_VTIM(0), GENMASK(11, 0), 0);
+	ret = mt7530_setup_vlan0(priv);
+	if (ret)
+		return ret;
+
+	mt753x_trap_frames(priv);
+	return mt7530_fdb_cmd(priv, MT7530_FDB_FLUSH, NULL);
+}
+
 static int
 mt753x_setup(struct dsa_switch *ds)
 {
@@ -3322,7 +3782,7 @@ mt753x_setup(struct dsa_switch *ds)
 	if (ret && priv->irq_domain)
 		mt7530_free_mdio_irq(priv);
 
-	if (!ret && priv->bus) {
+	if (!ret && (priv->bus || priv->info->stats_ops->always_poll)) {
 		priv->info->stats_ops->update(priv);
 		schedule_delayed_work(&priv->stats_work,
 				      msecs_to_jiffies(priv->info->stats_ops->poll_interval_ms));
@@ -3336,13 +3796,20 @@ mt753x_teardown(struct dsa_switch *ds)
 {
 	struct mt7530_priv *priv = ds->priv;
 
-	if (priv->bus)
+	if (priv->info->irq_teardown)
+		priv->info->irq_teardown(priv);
+	if (priv->bus || priv->info->stats_ops->always_poll)
 		cancel_delayed_work_sync(&priv->stats_work);
 }
 
 static int mt753x_set_mac_eee(struct dsa_switch *ds, int port,
 			      struct ethtool_keee *e)
 {
+	struct mt7530_priv *priv = ds->priv;
+
+	if (!priv->info->phylink_mac_ops->mac_enable_tx_lpi)
+		return -EOPNOTSUPP;
+
 	if (e->tx_lpi_timer > 0xFFF)
 		return -EINVAL;
 
@@ -3475,6 +3942,9 @@ static int mt753x_setup_tc(struct dsa_switch *ds, int port,
 {
 	struct mt7530_priv *priv = ds->priv;
 
+	if (!priv->info->setup_tc)
+		return -EOPNOTSUPP;
+
 	return priv->info->setup_tc(ds, port, type, type_data);
 }
 
@@ -3547,6 +4017,12 @@ static const struct dsa_switch_ops mt7530_switch_ops = {
 	.port_hsr_leave		= dsa_port_simple_hsr_leave,
 };
 
+static const struct phylink_mac_ops mt7620_phylink_mac_ops = {
+	.mac_config	= mt7620_phylink_mac_config,
+	.mac_link_down	= mt7620_phylink_mac_link_down,
+	.mac_link_up	= mt7620_phylink_mac_link_up,
+};
+
 static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 	.mac_select_pcs	= mt753x_phylink_mac_select_pcs,
 	.mac_config	= mt753x_phylink_mac_config,
@@ -3557,6 +4033,31 @@ static const struct phylink_mac_ops mt753x_phylink_mac_ops = {
 };
 
 const struct mt753x_info mt753x_table[] = {
+	[ID_MT7620] = {
+		.id = ID_MT7620,
+		.stats_ops = &mt7620_stats_ops,
+		.setup_mdio = mt7620_setup_mdio,
+		.irq_teardown = mt7620_mask_irq,
+		.port_irq_enable = mt7620_port_irq_enable,
+		.port_irq_disable = mt7620_port_irq_disable,
+		.phylink_mac_ops = &mt7620_phylink_mac_ops,
+		.phy_iac = MT7620_PHY_IAC,
+		.gmaccr = MT7620_GMACCR,
+		.max_mtu = MT7620_MAX_MTU,
+		.max_rx_pkt_len0 = ETH_FRAME_LEN + ETH_FCS_LEN,
+		.rx_vlan_len = 2 * VLAN_HLEN,
+		.tag_protocol = DSA_TAG_PROTO_MTK_OOB,
+		.cpu_vlan_egress = MT7530_VLAN_EGRESS_TAG,
+		.reset_name = "esw",
+		.num_mib_counters = ARRAY_SIZE(mt7620_mib),
+		.num_vlan_entries = MT7620_NUM_VLANS,
+		.vlan_index = mt7620_vlan_index,
+		.vlan_prepare = mt7620_vlan_prepare,
+		.sw_setup = mt7620_setup,
+		.phy_read_c22 = mt7531_ind_c22_phy_read,
+		.phy_write_c22 = mt7531_ind_c22_phy_write,
+		.mac_port_get_caps = mt7620_mac_port_get_caps,
+	},
 	[ID_MT7621] = {
 		.id = ID_MT7621,
 		.setup_tc = mt7530_setup_tc,
@@ -3718,6 +4219,7 @@ int
 mt7530_probe_common(struct mt7530_priv *priv)
 {
 	struct device *dev = priv->dev;
+	int port;
 
 	priv->ds = devm_kzalloc(dev, sizeof(*priv->ds), GFP_KERNEL);
 	if (!priv->ds)
@@ -3732,6 +4234,24 @@ mt7530_probe_common(struct mt7530_priv *priv)
 	priv->info = of_device_get_match_data(dev);
 	if (!priv->info)
 		return -EINVAL;
+
+	if (priv->info->num_vlan_entries) {
+		priv->vlan_ids = devm_kcalloc(dev, priv->info->num_vlan_entries,
+					      sizeof(*priv->vlan_ids), GFP_KERNEL);
+		if (!priv->vlan_ids)
+			return -ENOMEM;
+	}
+
+	if (priv->info->num_mib_counters) {
+		for (port = 0; port < MT7530_NUM_PORTS; port++) {
+			priv->ports[port].mib =
+				devm_kcalloc(dev, priv->info->num_mib_counters,
+					     sizeof(*priv->ports[port].mib),
+					     GFP_KERNEL);
+			if (!priv->ports[port].mib)
+				return -ENOMEM;
+		}
+	}
 
 	priv->id = priv->info->id;
 	priv->dev = dev;

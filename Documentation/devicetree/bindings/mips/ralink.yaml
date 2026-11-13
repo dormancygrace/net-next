@@ -55,6 +55,7 @@ properties:
         items:
           - enum:
               - ralink,mt7620a-eval-board
+              - zbtlink,zbt-we826-t2
           - const: ralink,mt7620a-soc
 
       - description: Boards with Mediatek/Ralink MT7620N SoC

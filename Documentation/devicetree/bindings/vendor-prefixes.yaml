@@ -1991,6 +1991,8 @@ patternProperties:
     description: YuzukiHD Open Source Hardware
   "^zarlink,.*":
     description: Zarlink Semiconductor
+  "^zbtlink,.*":
+    description: Shenzhen Zhibotong Electronics Co., Ltd.
   "^zealz,.*":
     description: Zealz
   "^zeitec,.*":
